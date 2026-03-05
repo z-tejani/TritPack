@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tritpack"
+version = "0.1.0"
+description = "Balanced ternary memory compression for LLMs"
+authors = [{ name = "TritPack Contributors" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/z-tejani/TritPack"
+Repository = "https://github.com/z-tejani/TritPack"
+Issues = "https://github.com/z-tejani/TritPack/issues"
+dependencies = [
+    "numpy>=1.26",
+    "psutil",
+    "rich",
+]
+
+[project.optional-dependencies]
+gguf = ["gguf"]
+dev = [
+    "hypothesis>=6.0",
+    "pytest>=7.0",
+    "pytest-benchmark",
+    "pytest-cov",
+]
+
+[project.scripts]
+tritpack = "tritpack.benchmark.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-dir]
+"" = "python"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["tritpack"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+]

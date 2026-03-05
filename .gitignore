@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+*.pyd
+venv/
+.venv/
+
+# Testing / coverage
+.pytest_cache/
+.hypothesis/
+.benchmarks/
+.coverage
+htmlcov/
+*.cover
+
+# Rust
+rust/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Misc
+*.json.bak

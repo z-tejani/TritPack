@@ -1,0 +1,27 @@
+[package]
+name = "tritpack-native"
+version = "0.1.0"
+edition = "2021"
+description = "Balanced ternary memory compression for LLMs — Rust core"
+license = "MIT"
+
+[lib]
+name = "tritpack_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+half = "2"
+rayon = "1.8"
+pyo3 = { version = "0.21", features = ["extension-module"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "criterion_benches"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
