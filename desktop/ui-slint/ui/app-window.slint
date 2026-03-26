@@ -1,0 +1,268 @@
+import { TabWidget, Button, LineEdit, TextEdit } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    width: 1100px;
+    height: 760px;
+    title: "TritPack Desktop";
+
+    in property <[string]> library-items;
+    in property <[string]> job-items;
+    in property <[string]> search-items;
+    in property <[string]> detail-items;
+    in property <[string]> runtime-items;
+    in property <[string]> chat-items;
+    in-out property <string> status-text: "";
+    in-out property <string> import-path: "";
+    in-out property <string> model-id-input: "";
+    in-out property <string> hf-query: "";
+    in-out property <string> search-index: "";
+    in-out property <string> direct-url: "";
+    in-out property <string> hf-token: "";
+    in-out property <string> job-id-input: "";
+    in-out property <string> chat-model-id: "";
+    in-out property <string> chat-prompt: "";
+
+    callback refresh();
+    callback import-local(string);
+    callback queue-convert(string);
+    callback prepare-runtime(string);
+    callback inspect-model(string);
+    callback search-models(string);
+    callback download-url(string);
+    callback download-search-result(string);
+    callback refresh-runtime();
+    callback cancel-job(string);
+    callback send-prompt(string, string);
+    callback save-token(string);
+    callback clear-cache(string);
+
+    VerticalLayout {
+        spacing: 12px;
+        padding: 12px;
+
+        Rectangle {
+            height: 36px;
+            border-width: 1px;
+            border-color: #d8d2c5;
+            background: #f6f1e7;
+            Text {
+                x: 12px;
+                y: 9px;
+                text: root.status-text;
+                color: #4a4236;
+            }
+        }
+
+        TabWidget {
+            Tab {
+                title: "Library";
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.import-path; placeholder-text: "Path to local .gguf"; }
+                        Button {
+                            text: "Import Local";
+                            clicked => { root.import-local(root.import-path); }
+                        }
+                        LineEdit { text <=> root.model-id-input; placeholder-text: "Model ID for conversion/cache actions"; }
+                        Button {
+                            text: "Inspect";
+                            clicked => { root.inspect-model(root.model-id-input); }
+                        }
+                        Button {
+                            text: "Queue Conversion";
+                            clicked => { root.queue-convert(root.model-id-input); }
+                        }
+                        Button {
+                            text: "Prepare Runtime";
+                            clicked => { root.prepare-runtime(root.model-id-input); }
+                        }
+                        Button {
+                            text: "Clear Cache";
+                            clicked => { root.clear-cache(root.model-id-input); }
+                        }
+                        Button {
+                            text: "Refresh";
+                            clicked => { root.refresh(); }
+                        }
+                    }
+
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.library-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Model Detail";
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.model-id-input; placeholder-text: "Model ID"; }
+                        Button {
+                            text: "Inspect";
+                            clicked => { root.inspect-model(root.model-id-input); }
+                        }
+                        Button {
+                            text: "Prepare Runtime";
+                            clicked => { root.prepare-runtime(root.model-id-input); }
+                        }
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.detail-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Discover";
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.hf-query; placeholder-text: "Search Hugging Face for GGUF"; }
+                        Button {
+                            text: "Search";
+                            clicked => { root.search-models(root.hf-query); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.search-index; placeholder-text: "Result #"; }
+                        Button {
+                            text: "Download Result";
+                            clicked => { root.download-search-result(root.search-index); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.direct-url; placeholder-text: "Direct GGUF URL or a search result URL"; }
+                        Button {
+                            text: "Download";
+                            clicked => { root.download-url(root.direct-url); }
+                        }
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.search-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Queue";
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.job-id-input; placeholder-text: "Job ID"; }
+                        Button {
+                            text: "Cancel Job";
+                            clicked => { root.cancel-job(root.job-id-input); }
+                        }
+                        Button {
+                            text: "Refresh Jobs";
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.job-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Chat";
+                VerticalLayout {
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.chat-model-id; placeholder-text: "Model ID"; }
+                        Button {
+                            text: "Refresh";
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                    TextEdit {
+                        text <=> root.chat-prompt;
+                        wrap: word-wrap;
+                        height: 120px;
+                    }
+                    Button {
+                        text: "Send";
+                        clicked => { root.send-prompt(root.chat-model-id, root.chat-prompt); }
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.chat-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Settings";
+                VerticalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Hugging Face token";
+                        color: #2c2924;
+                    }
+                    LineEdit { text <=> root.hf-token; }
+                    Button {
+                        text: "Save Token";
+                        clicked => { root.save-token(root.hf-token); }
+                    }
+                    Button {
+                        text: "Refresh Runtime";
+                        clicked => { root.refresh-runtime(); }
+                    }
+                    Rectangle {
+                        border-width: 1px;
+                        border-color: #c4bbaa;
+                        background: #fbf8f2;
+                        for item in root.runtime-items : Text {
+                            text: item;
+                            color: #2c2924;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

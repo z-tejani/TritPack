@@ -1,0 +1,7 @@
+version = "b8530"
+platform = "macos-arm64"
+source = "https://github.com/ggml-org/llama.cpp/releases/tag/b8530"
+archive_name = "llama-b8530-bin-macos-arm64.tar.gz"
+archive_url = "https://github.com/ggml-org/llama.cpp/releases/download/b8530/llama-b8530-bin-macos-arm64.tar.gz"
+sha256 = "8b2277e17fb9e32e4daa929db378af9041979c759d0f470590119c64550d7a4e"
+binary_names = ["llama-cli"]

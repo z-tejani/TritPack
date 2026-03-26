@@ -20,6 +20,7 @@ htmlcov/
 
 # Rust
 rust/target/
+/target/
 
 # IDE
 .idea/
@@ -28,3 +29,8 @@ rust/target/
 
 # Misc
 *.json.bak
+
+# Desktop packaging artifacts
+resources/llama.cpp/*
+!resources/llama.cpp/manifest.toml
+resources/python/cpython/

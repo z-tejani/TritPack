@@ -1,0 +1,5 @@
+version = "3.11.15"
+source = "https://github.com/astral-sh/python-build-standalone/releases/tag/20260325"
+archive_name = "cpython-3.11.15+20260325-aarch64-apple-darwin-install_only.tar.gz"
+archive_url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260325/cpython-3.11.15%2B20260325-aarch64-apple-darwin-install_only.tar.gz"
+sha256 = "054a5e5645c87538df903aa5ffee9ae6b84323545b63bcd0e01285bda8898b6c"

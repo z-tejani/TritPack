@@ -1,0 +1,15 @@
+[package]
+name = "tritpack-ui-slint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+slint.workspace = true
+tritpack-app-core = { path = "../app-core" }
+tritpack-runtime-api = { path = "../runtime-api" }
+
+[build-dependencies]
+slint-build.workspace = true

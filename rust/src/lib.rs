@@ -10,13 +10,16 @@ pub mod ffi;
 pub mod packing;
 pub mod quantizer;
 
+#[cfg(feature = "python-extension")]
 use pyo3::prelude::*;
+#[cfg(feature = "python-extension")]
 use pyo3::types::PyBytes;
 
 // ---------------------------------------------------------------------------
 // PyO3 bindings
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "python-extension")]
 /// Pack a list/bytes of trit values {-1, 0, +1} into bytes.
 ///
 /// Parameters
@@ -32,6 +35,7 @@ fn pack_trits(py: Python<'_>, trits: Vec<i8>) -> PyResult<PyObject> {
     Ok(PyBytes::new_bound(py, &packed).into())
 }
 
+#[cfg(feature = "python-extension")]
 /// Unpack bytes produced by `pack_trits` back to a list of trits.
 ///
 /// Parameters
@@ -47,6 +51,7 @@ fn unpack_trits(_py: Python<'_>, data: &[u8], count: usize) -> PyResult<Vec<i8>>
     Ok(packing::unpack_trits(data, count))
 }
 
+#[cfg(feature = "python-extension")]
 /// Pack trits in parallel (uses rayon for large inputs).
 #[pyfunction]
 fn pack_trits_parallel(py: Python<'_>, trits: Vec<i8>) -> PyResult<PyObject> {
@@ -54,6 +59,7 @@ fn pack_trits_parallel(py: Python<'_>, trits: Vec<i8>) -> PyResult<PyObject> {
     Ok(PyBytes::new_bound(py, &packed).into())
 }
 
+#[cfg(feature = "python-extension")]
 /// Quantize a float32 tensor using per-block ternary quantization.
 ///
 /// Parameters
@@ -85,6 +91,7 @@ fn quantize_tensor(
     Ok(result.to_object(py))
 }
 
+#[cfg(feature = "python-extension")]
 /// Dequantize a ternary-quantized tensor back to float32.
 ///
 /// Parameters
@@ -122,10 +129,10 @@ fn dequantize_tensor(
     Ok(quantizer::dequantize_tensor(&qt))
 }
 
+#[cfg(feature = "python-extension")]
 // ---------------------------------------------------------------------------
 // Module definition
 // ---------------------------------------------------------------------------
-
 #[pymodule]
 fn tritpack_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pack_trits, m)?)?;

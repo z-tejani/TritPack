@@ -184,9 +184,7 @@ mod tests {
 
     #[test]
     fn test_parallel_matches_serial() {
-        let trits: Vec<i8> = (0..1000)
-            .map(|i| ((i % 3) as i8) - 1)
-            .collect();
+        let trits: Vec<i8> = (0..1000).map(|i| ((i % 3) as i8) - 1).collect();
         let serial = pack_trits(&trits);
         let parallel = pack_trits_parallel(&trits);
         assert_eq!(serial, parallel);

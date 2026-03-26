@@ -1,0 +1,36 @@
+name: release-macos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_NOTARY_PROFILE: ${{ secrets.APPLE_NOTARY_PROFILE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bundle
+        run: ./packaging/macos/build_app_bundle.sh
+
+      - name: Sign app
+        run: ./packaging/macos/sign_app.sh
+
+      - name: Notarize app
+        run: ./packaging/macos/notarize_app.sh
+
+      - name: Build dmg
+        run: ./packaging/macos/build_dmg.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tritpack-macos
+          path: |
+            target/macos-bundle/TritPack.app
+            target/macos-bundle/TritPack.dmg

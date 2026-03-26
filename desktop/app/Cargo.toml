@@ -1,0 +1,12 @@
+[package]
+name = "tritpack-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tritpack-app-core = { path = "../app-core" }
+tritpack-conversion = { path = "../conversion" }
+tritpack-runtime-llamacpp = { path = "../runtime-llamacpp" }
+tritpack-ui-slint = { path = "../ui-slint" }
