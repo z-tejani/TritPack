@@ -2,12 +2,16 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use chrono::Local;
 use i_slint_backend_winit::WinitWindowAccessor;
 use slint::{ModelRc, PhysicalPosition, SharedString, Timer, TimerMode, VecModel};
 use tritpack_app_core::{DesktopApp, HuggingFaceFile};
-use tritpack_runtime_api::{ConversionProfile, InferenceEvent, ModelRecord, RuntimeProfile};
+use tritpack_runtime_api::{
+    ChatSession, ConversionProfile, InferenceEvent, ModelRecord, RuntimeProfile,
+};
 
 slint::include_modules!();
 
@@ -19,9 +23,11 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let detail_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let runtime_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let chat_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
+    let saved_chat_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let chat_state = Arc::new(Mutex::new(Vec::<SharedString>::new()));
     let search_state = Arc::new(Mutex::new(Vec::<HuggingFaceFile>::new()));
     let model_state = Arc::new(Mutex::new(Vec::<ModelRecord>::new()));
+    let saved_sessions_state = Arc::new(Mutex::new(Vec::<ChatSession>::new()));
 
     window.set_library_items(ModelRc::from(library_items.clone()));
     window.set_job_items(ModelRc::from(job_items.clone()));
@@ -29,7 +35,14 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     window.set_detail_items(ModelRc::from(detail_items.clone()));
     window.set_runtime_items(ModelRc::from(runtime_items.clone()));
     window.set_chat_items(ModelRc::from(chat_items.clone()));
+    window.set_saved_chat_items(ModelRc::from(saved_chat_items.clone()));
     window.set_status_text(app.runtime_health()?.into());
+    window.set_greeting_text(greeting_for_local_time().into());
+    if let Some(theme_mode) = app.get_ui_setting("ui.theme_mode")? {
+        if let Ok(theme_mode) = theme_mode.parse::<i32>() {
+            window.set_theme_mode(theme_mode);
+        }
+    }
     runtime_items.set_vec(
         app.runtime_detail_summary()?
             .into_iter()
@@ -61,15 +74,25 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
         });
     }
 
-    refresh_models(&app, &window, &library_items, &job_items, &model_state)?;
+    refresh_models(
+        &app,
+        &window,
+        &library_items,
+        &job_items,
+        &saved_chat_items,
+        &model_state,
+        &saved_sessions_state,
+    )?;
 
     let refresh_timer = Timer::default();
     let weak = window.as_weak();
     let app_for_timer = Arc::clone(&app);
     let library_for_timer = library_items.clone();
     let jobs_for_timer = job_items.clone();
+    let saved_chats_for_timer = saved_chat_items.clone();
     let runtime_for_timer = runtime_items.clone();
     let model_state_for_timer = Arc::clone(&model_state);
+    let sessions_for_timer = Arc::clone(&saved_sessions_state);
     refresh_timer.start(
         TimerMode::Repeated,
         std::time::Duration::from_secs(2),
@@ -80,7 +103,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                     &window,
                     &library_for_timer,
                     &jobs_for_timer,
+                    &saved_chats_for_timer,
                     &model_state_for_timer,
+                    &sessions_for_timer,
                 );
                 let _ = refresh_runtime(&app_for_timer, &window, &runtime_for_timer);
             }
@@ -91,8 +116,10 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_refresh = Arc::clone(&app);
     let library_for_refresh = library_items.clone();
     let jobs_for_refresh = job_items.clone();
+    let saved_chats_for_refresh = saved_chat_items.clone();
     let runtime_for_refresh = runtime_items.clone();
     let model_state_for_refresh = Arc::clone(&model_state);
+    let sessions_for_refresh = Arc::clone(&saved_sessions_state);
     window.on_refresh(move || {
         if let Some(window) = weak.upgrade() {
             let _ = refresh_models(
@@ -100,7 +127,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_refresh,
                 &jobs_for_refresh,
+                &saved_chats_for_refresh,
                 &model_state_for_refresh,
+                &sessions_for_refresh,
             );
             let _ = refresh_runtime(&app_for_refresh, &window, &runtime_for_refresh);
         }
@@ -190,7 +219,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_cancel = Arc::clone(&app);
     let library_for_cancel = library_items.clone();
     let jobs_for_cancel = job_items.clone();
+    let saved_chats_for_cancel = saved_chat_items.clone();
     let model_state_for_cancel = Arc::clone(&model_state);
+    let sessions_for_cancel = Arc::clone(&saved_sessions_state);
     window.on_cancel_job(move |job_id| {
         if job_id.trim().is_empty() {
             return;
@@ -207,7 +238,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_cancel,
                 &jobs_for_cancel,
+                &saved_chats_for_cancel,
                 &model_state_for_cancel,
+                &sessions_for_cancel,
             );
         }
     });
@@ -216,7 +249,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_import = Arc::clone(&app);
     let library_for_import = library_items.clone();
     let jobs_for_import = job_items.clone();
+    let saved_chats_for_import = saved_chat_items.clone();
     let model_state_for_import = Arc::clone(&model_state);
+    let sessions_for_import = Arc::clone(&saved_sessions_state);
     window.on_import_local(move |path| {
         if path.trim().is_empty() {
             return;
@@ -234,7 +269,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_import,
                 &jobs_for_import,
+                &saved_chats_for_import,
                 &model_state_for_import,
+                &sessions_for_import,
             );
         }
     });
@@ -304,7 +341,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_prepare = Arc::clone(&app);
     let library_for_prepare = library_items.clone();
     let jobs_for_prepare = job_items.clone();
+    let saved_chats_for_prepare = saved_chat_items.clone();
     let model_state_for_prepare = Arc::clone(&model_state);
+    let sessions_for_prepare = Arc::clone(&saved_sessions_state);
     window.on_prepare_runtime(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -323,7 +362,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_prepare,
                 &jobs_for_prepare,
+                &saved_chats_for_prepare,
                 &model_state_for_prepare,
+                &sessions_for_prepare,
             );
         }
     });
@@ -333,7 +374,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let detail_for_inspect = detail_items.clone();
     let library_for_inspect = library_items.clone();
     let jobs_for_inspect = job_items.clone();
+    let saved_chats_for_inspect = saved_chat_items.clone();
     let model_state_for_inspect = Arc::clone(&model_state);
+    let sessions_for_inspect = Arc::clone(&saved_sessions_state);
     window.on_inspect_model(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -356,7 +399,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_inspect,
                 &jobs_for_inspect,
+                &saved_chats_for_inspect,
                 &model_state_for_inspect,
+                &sessions_for_inspect,
             );
         }
     });
@@ -414,7 +459,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let search_state_for_download = Arc::clone(&search_state);
     let library_for_hf_download = library_items.clone();
     let jobs_for_hf_download = job_items.clone();
+    let saved_chats_for_hf_download = saved_chat_items.clone();
     let model_state_for_hf_download = Arc::clone(&model_state);
+    let sessions_for_hf_download = Arc::clone(&saved_sessions_state);
     window.on_download_search_result(move |index| {
         let Ok(index) = index.trim().parse::<usize>() else {
             if let Some(window) = weak.upgrade() {
@@ -448,7 +495,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_hf_download,
                 &jobs_for_hf_download,
+                &saved_chats_for_hf_download,
                 &model_state_for_hf_download,
+                &sessions_for_hf_download,
             );
         }
     });
@@ -457,7 +506,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_download = Arc::clone(&app);
     let library_for_download = library_items.clone();
     let jobs_for_download = job_items.clone();
+    let saved_chats_for_download = saved_chat_items.clone();
     let model_state_for_download = Arc::clone(&model_state);
+    let sessions_for_download = Arc::clone(&saved_sessions_state);
     window.on_download_url(move |url| {
         if url.trim().is_empty() {
             return;
@@ -474,7 +525,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_download,
                 &jobs_for_download,
+                &saved_chats_for_download,
                 &model_state_for_download,
+                &sessions_for_download,
             );
         }
     });
@@ -496,7 +549,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_cache = Arc::clone(&app);
     let library_for_cache = library_items.clone();
     let jobs_for_cache = job_items.clone();
+    let saved_chats_for_cache = saved_chat_items.clone();
     let model_state_for_cache = Arc::clone(&model_state);
+    let sessions_for_cache = Arc::clone(&saved_sessions_state);
     window.on_clear_cache(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -513,7 +568,9 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_cache,
                 &jobs_for_cache,
+                &saved_chats_for_cache,
                 &model_state_for_cache,
+                &sessions_for_cache,
             );
         }
     });
@@ -522,6 +579,8 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_chat = Arc::clone(&app);
     let chat_for_chat = chat_items.clone();
     let chat_state_for_chat = Arc::clone(&chat_state);
+    let saved_chats_for_chat = saved_chat_items.clone();
+    let sessions_for_chat = Arc::clone(&saved_sessions_state);
     window.on_send_prompt(move |model_id, prompt| {
         if prompt.trim().is_empty() {
             return;
@@ -545,6 +604,10 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
         if let Some(window) = weak.upgrade() {
             window.set_chat_prompt("".into());
             window.set_status_text("Starting generation".into());
+        }
+        if let Ok(sessions) = app_for_chat.list_chat_sessions() {
+            *sessions_for_chat.lock().expect("session state poisoned") = sessions.clone();
+            fill_saved_chats(&saved_chats_for_chat, &sessions);
         }
 
         let app = Arc::clone(&app_for_chat);
@@ -609,6 +672,60 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
         });
     });
 
+    let weak = window.as_weak();
+    let app_for_theme = Arc::clone(&app);
+    window.on_set_theme_mode(move |mode| {
+        if let Some(window) = weak.upgrade() {
+            window.set_theme_mode(mode);
+            let _ = app_for_theme.set_ui_setting("ui.theme_mode", &mode.to_string());
+        }
+    });
+
+    let weak = window.as_weak();
+    let sessions_for_select = Arc::clone(&saved_sessions_state);
+    let chat_for_select = chat_items.clone();
+    let chat_state_for_select = Arc::clone(&chat_state);
+    window.on_select_saved_chat_item(move |index| {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let selected = {
+            let sessions = sessions_for_select.lock().expect("session state poisoned");
+            sessions.get(index).cloned()
+        };
+        if let Some(window) = weak.upgrade() {
+            match selected {
+                Some(session) => {
+                    let lines = session
+                        .messages
+                        .iter()
+                        .map(|message| match message.role {
+                            tritpack_runtime_api::ChatRole::User => {
+                                format!("User: {}", message.content)
+                            }
+                            tritpack_runtime_api::ChatRole::Assistant => {
+                                format!("Assistant: {}", message.content)
+                            }
+                            tritpack_runtime_api::ChatRole::System => {
+                                format!("System: {}", message.content)
+                            }
+                        })
+                        .map(SharedString::from)
+                        .collect::<Vec<_>>();
+                    *chat_state_for_select.lock().expect("chat state poisoned") = lines.clone();
+                    chat_for_select.set_vec(lines);
+                    window.set_selected_saved_chat_index(index as i32);
+                    window.set_model_id_input(session.model_id.clone().into());
+                    window.set_chat_model_id(session.model_id.into());
+                    window.set_selected_view(0);
+                    window.set_chat_drawer_open(false);
+                    window.set_status_text("Loaded saved chat".into());
+                }
+                None => window.set_status_text("Saved chat selection out of range".into()),
+            }
+        }
+    });
+
     window.run()?;
     Ok(())
 }
@@ -618,9 +735,13 @@ fn refresh_models(
     window: &AppWindow,
     library_items: &VecModel<SharedString>,
     job_items: &VecModel<SharedString>,
+    saved_chat_items: &VecModel<SharedString>,
     model_state: &Arc<Mutex<Vec<ModelRecord>>>,
+    saved_sessions_state: &Arc<Mutex<Vec<ChatSession>>>,
 ) -> Result<()> {
     *model_state.lock().expect("model state poisoned") = app.list_models()?;
+    let sessions = app.list_chat_sessions()?;
+    *saved_sessions_state.lock().expect("session state poisoned") = sessions.clone();
     library_items.set_vec(
         app.list_model_summaries()?
             .into_iter()
@@ -633,6 +754,7 @@ fn refresh_models(
             .map(Into::into)
             .collect::<Vec<SharedString>>(),
     );
+    fill_saved_chats(saved_chat_items, &sessions);
     window.set_status_text(app.runtime_health()?.into());
     Ok(())
 }
@@ -670,6 +792,56 @@ fn fill_results(model: &VecModel<SharedString>, results: &[HuggingFaceFile]) {
             })
             .collect::<Vec<SharedString>>(),
     );
+}
+
+fn fill_saved_chats(model: &VecModel<SharedString>, sessions: &[ChatSession]) {
+    model.set_vec(
+        sessions
+            .iter()
+            .map(|session| {
+                let preview = session
+                    .messages
+                    .first()
+                    .map(|message| {
+                        let trimmed = message.content.trim();
+                        if trimmed.chars().count() > 42 {
+                            format!("{}...", trimmed.chars().take(42).collect::<String>())
+                        } else {
+                            trimmed.to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "Conversation".to_string());
+                format!(
+                    "{} | {} | {}",
+                    session
+                        .created_at
+                        .with_timezone(&Local)
+                        .format("%b %-d, %-I:%M %p"),
+                    session.model_id,
+                    preview
+                )
+                .into()
+            })
+            .collect::<Vec<SharedString>>(),
+    );
+}
+
+fn greeting_for_local_time() -> &'static str {
+    let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return "Hello";
+    };
+
+    let local_offset_seconds = chrono::Local::now().offset().local_minus_utc() as i64;
+    let local_seconds = duration.as_secs() as i64 + local_offset_seconds;
+    let seconds_in_day = 24 * 60 * 60;
+    let hour = ((local_seconds.rem_euclid(seconds_in_day)) / 3600) as i32;
+
+    match hour {
+        5..=11 => "Good morning",
+        12..=17 => "Good afternoon",
+        18..=23 => "Good evening",
+        _ => "Hello",
+    }
 }
 
 fn repo_root() -> PathBuf {

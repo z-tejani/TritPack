@@ -303,6 +303,7 @@ export component AppWindow inherits Window {
     in property <[string]> detail-items;
     in property <[string]> runtime-items;
     in property <[string]> chat-items;
+    in property <[string]> saved-chat-items;
     in-out property <string> status-text: "";
     in-out property <string> import-path: "";
     in-out property <string> model-id-input: "";
@@ -313,10 +314,13 @@ export component AppWindow inherits Window {
     in-out property <string> job-id-input: "";
     in-out property <string> chat-model-id: "";
     in-out property <string> chat-prompt: "";
+    in-out property <string> greeting-text: "Hello";
     in-out property <int> selected-view: 0;
-    in-out property <int> theme-mode: 0;
+    in-out property <int> theme-mode: 1;
     in-out property <int> selected-library-index: -1;
     in-out property <int> selected-search-index: -1;
+    in-out property <int> selected-saved-chat-index: -1;
+    in-out property <bool> chat-drawer-open: false;
 
     callback refresh();
     callback import-local(string);
@@ -341,6 +345,8 @@ export component AppWindow inherits Window {
     callback open-local-models-guide();
     callback select-library-item(int);
     callback select-search-item(int);
+    callback select-saved-chat-item(int);
+    callback set-theme-mode(int);
 
     MenuBar {
         Menu {
@@ -583,6 +589,13 @@ export component AppWindow inherits Window {
                                         symbol: "+";
                                         invoke => { root.toggle-maximize-window(); }
                                     }
+
+                                    IconCircle {
+                                        label: "≡";
+                                        fill: root.chip-fill;
+                                        text-color: #ffffff;
+                                        invoke => { root.chat-drawer-open = !root.chat-drawer-open; }
+                                    }
                                 }
 
                                 Rectangle { horizontal-stretch: 1; background: #00000000; }
@@ -639,10 +652,10 @@ export component AppWindow inherits Window {
                                 Rectangle { horizontal-stretch: 1; background: #00000000; }
 
                                 IconCircle {
-                                    label: root.theme-mode == 0 ? "☀" : "☾";
+                                    label: root.theme-mode == 0 ? "☾" : "☀";
                                     fill: root.chip-fill;
-                                    text-color: root.text-secondary;
-                                    invoke => { root.theme-mode = root.theme-mode == 0 ? 1 : 0; }
+                                    text-color: #ffffff;
+                                    invoke => { root.set-theme-mode(root.theme-mode == 0 ? 1 : 0); }
                                 }
                             }
                         }
@@ -656,41 +669,84 @@ export component AppWindow inherits Window {
                                 height: parent.height;
                                 background: #00000000;
 
+                                if (root.chat-drawer-open) : PanelCard {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: 300px;
+                                    height: parent.height;
+                                    fill: root.panel-soft;
+                                    edge: root.shell-edge;
+                                    radius: 22px;
+
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 12px;
+
+                                        HorizontalLayout {
+                                            SectionTitle { text: "Saved Chats"; }
+                                            Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                            Button { text: "Close"; clicked => { root.chat-drawer-open = false; } }
+                                        }
+
+                                        Rectangle {
+                                            vertical-stretch: 1;
+                                            background: #00000000;
+
+                                            if (root.saved-chat-items.length == 0) : EmptyState {
+                                                width: parent.width;
+                                                height: parent.height;
+                                                title: "No saved chats yet";
+                                                body: "Start a conversation and it will appear here.";
+                                                title-color: root.text-primary;
+                                                body-color: root.text-secondary;
+                                            }
+
+                                            if (root.saved-chat-items.length > 0) : ListView {
+                                                width: parent.width;
+                                                height: parent.height;
+                                                for item[index] in root.saved-chat-items : StreamRow {
+                                                    value: item;
+                                                    alternate: Math.mod(index, 2) == 1;
+                                                    selected: index == root.selected-saved-chat-index;
+                                                    interactive: true;
+                                                    fill: root.row-fill;
+                                                    alternate-fill: root.row-alt-fill;
+                                                    selected-fill: root.row-selected-fill;
+                                                    edge: root.shell-edge;
+                                                    text-color: root.text-primary;
+                                                    invoke => { root.select-saved-chat-item(index); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 if (root.chat-items.length == 0) : Rectangle {
                                     width: parent.width;
                                     height: parent.height;
                                     background: #00000000;
 
-                                    VerticalLayout {
-                                        x: (parent.width - 760px) / 2;
-                                        y: (parent.height - 404px) / 2;
+                                    Rectangle {
                                         width: 760px;
-                                        spacing: 18px;
-
-                                        Rectangle {
-                                            x: (parent.width - 92px) / 2;
-                                            width: 92px;
-                                            height: 92px;
-                                            border-radius: 46px;
-                                            background: root.orb-fill;
-                                            drop-shadow-blur: 36px;
-                                            drop-shadow-color: root.theme-mode == 0 ? #d8dee65a : #ffffff1e;
-                                            drop-shadow-offset-x: 0px;
-                                            drop-shadow-offset-y: 0px;
-                                        }
+                                        height: 328px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: 64px;
+                                        background: #00000000;
 
                                         Text {
                                             width: parent.width;
+                                            y: 0px;
                                             horizontal-alignment: center;
-                                            text: "Good afternoon";
+                                            text: root.greeting-text;
                                             color: root.text-primary;
-                                            font-size: 42px;
+                                            font-size: 38px;
                                             font-weight: 800;
                                             font-family: "SF Pro Display";
                                         }
 
                                         Text {
                                             width: parent.width;
+                                            y: 60px;
                                             horizontal-alignment: center;
                                             text: "How can TritPack help you today?";
                                             color: root.text-secondary;
@@ -699,8 +755,10 @@ export component AppWindow inherits Window {
                                         }
 
                                         Rectangle {
+                                            x: 0px;
+                                            y: 124px;
                                             width: parent.width;
-                                            height: 200px;
+                                            height: 204px;
                                             background: #00000000;
 
                                             GridLayout {
@@ -1281,7 +1339,7 @@ export component AppWindow inherits Window {
                                                     selected-text: root.text-primary;
                                                     idle-text: root.text-secondary;
                                                     preferred-width: 160px;
-                                                    invoke => { root.theme-mode = 0; }
+                                                    invoke => { root.set-theme-mode(0); }
                                                 }
 
                                                 PillButton {
@@ -1292,7 +1350,7 @@ export component AppWindow inherits Window {
                                                     selected-text: root.text-primary;
                                                     idle-text: root.text-secondary;
                                                     preferred-width: 140px;
-                                                    invoke => { root.theme-mode = 1; }
+                                                    invoke => { root.set-theme-mode(1); }
                                                 }
                                             }
 

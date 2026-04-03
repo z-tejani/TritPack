@@ -13,9 +13,25 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleIconFile</key>
-    <string>TritPack.icns</string>
+    <string>TritPack</string>
+    <key>CFBundleIconFiles</key>
+    <array>
+        <string>TritPack</string>
+    </array>
     <key>CFBundleIconName</key>
     <string>TritPack</string>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>TritPack</string>
+            </array>
+            <key>CFBundleIconName</key>
+            <string>TritPack</string>
+        </dict>
+    </dict>
     <key>CFBundleName</key>
     <string>TritPack</string>
     <key>CFBundlePackageType</key>

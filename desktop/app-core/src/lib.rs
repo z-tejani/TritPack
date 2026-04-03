@@ -359,6 +359,50 @@ impl SqliteModelStore {
         Ok(())
     }
 
+    pub fn list_sessions(&self) -> Result<Vec<ChatSession>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, model_id, sampling_params, messages, created_at
+            FROM sessions
+            ORDER BY created_at DESC
+            "#,
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let sampling_params: String = row.get(2)?;
+            let messages: String = row.get(3)?;
+            let created_at: String = row.get(4)?;
+            Ok(ChatSession {
+                id: row.get(0)?,
+                model_id: row.get(1)?,
+                sampling_params: serde_json::from_str(&sampling_params).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
+                messages: serde_json::from_str(&messages).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
+                created_at: DateTime::parse_from_rfc3339(&created_at)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
@@ -684,6 +728,45 @@ impl DesktopApp {
                 )
             })
             .collect())
+    }
+
+    pub fn list_chat_sessions(&self) -> Result<Vec<ChatSession>> {
+        self.store.list_sessions()
+    }
+
+    pub fn list_chat_session_summaries(&self) -> Result<Vec<String>> {
+        let models = self.list_models()?;
+        let sessions = self.list_chat_sessions()?;
+        Ok(sessions
+            .into_iter()
+            .map(|session| {
+                let model_name = models
+                    .iter()
+                    .find(|model| model.id == session.model_id)
+                    .map(|model| model.display_name.as_str())
+                    .unwrap_or("Unknown model");
+                let preview = session
+                    .messages
+                    .iter()
+                    .find(|message| message.role == ChatRole::User)
+                    .map(|message| truncate_preview(&message.content, 44))
+                    .unwrap_or_else(|| "Conversation".to_string());
+                format!(
+                    "{} | {} | {}",
+                    session.created_at.format("%b %-d, %-I:%M %p"),
+                    model_name,
+                    preview
+                )
+            })
+            .collect())
+    }
+
+    pub fn set_ui_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.store.set_setting(key, value)
+    }
+
+    pub fn get_ui_setting(&self, key: &str) -> Result<Option<String>> {
+        self.store.get_setting(key)
     }
 
     pub fn import_local(&self, source_path: impl AsRef<Path>) -> Result<ModelRecord> {
@@ -1442,6 +1525,17 @@ fn sanitize_filename(name: &str) -> String {
             _ => ch,
         })
         .collect()
+}
+
+fn truncate_preview(value: &str, limit: usize) -> String {
+    let trimmed = value.trim();
+    let mut chars = trimmed.chars();
+    let preview: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
 }
 
 fn short_id(id: &str) -> String {
