@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -5,7 +7,7 @@ use anyhow::Result;
 use i_slint_backend_winit::WinitWindowAccessor;
 use slint::{ModelRc, PhysicalPosition, SharedString, Timer, TimerMode, VecModel};
 use tritpack_app_core::{DesktopApp, HuggingFaceFile};
-use tritpack_runtime_api::{ConversionProfile, InferenceEvent, RuntimeProfile};
+use tritpack_runtime_api::{ConversionProfile, InferenceEvent, ModelRecord, RuntimeProfile};
 
 slint::include_modules!();
 
@@ -19,6 +21,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let chat_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let chat_state = Arc::new(Mutex::new(Vec::<SharedString>::new()));
     let search_state = Arc::new(Mutex::new(Vec::<HuggingFaceFile>::new()));
+    let model_state = Arc::new(Mutex::new(Vec::<ModelRecord>::new()));
 
     window.set_library_items(ModelRc::from(library_items.clone()));
     window.set_job_items(ModelRc::from(job_items.clone()));
@@ -58,7 +61,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
         });
     }
 
-    refresh_models(&app, &window, &library_items, &job_items)?;
+    refresh_models(&app, &window, &library_items, &job_items, &model_state)?;
 
     let refresh_timer = Timer::default();
     let weak = window.as_weak();
@@ -66,13 +69,19 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let library_for_timer = library_items.clone();
     let jobs_for_timer = job_items.clone();
     let runtime_for_timer = runtime_items.clone();
+    let model_state_for_timer = Arc::clone(&model_state);
     refresh_timer.start(
         TimerMode::Repeated,
         std::time::Duration::from_secs(2),
         move || {
             if let Some(window) = weak.upgrade() {
-                let _ =
-                    refresh_models(&app_for_timer, &window, &library_for_timer, &jobs_for_timer);
+                let _ = refresh_models(
+                    &app_for_timer,
+                    &window,
+                    &library_for_timer,
+                    &jobs_for_timer,
+                    &model_state_for_timer,
+                );
                 let _ = refresh_runtime(&app_for_timer, &window, &runtime_for_timer);
             }
         },
@@ -83,6 +92,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let library_for_refresh = library_items.clone();
     let jobs_for_refresh = job_items.clone();
     let runtime_for_refresh = runtime_items.clone();
+    let model_state_for_refresh = Arc::clone(&model_state);
     window.on_refresh(move || {
         if let Some(window) = weak.upgrade() {
             let _ = refresh_models(
@@ -90,6 +100,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_refresh,
                 &jobs_for_refresh,
+                &model_state_for_refresh,
             );
             let _ = refresh_runtime(&app_for_refresh, &window, &runtime_for_refresh);
         }
@@ -137,9 +148,49 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     });
 
     let weak = window.as_weak();
+    window.on_show_about(move || {
+        if let Some(window) = weak.upgrade() {
+            window.set_selected_view(5);
+            window.set_status_text("TritPack Desktop alpha".into());
+        }
+    });
+
+    window.on_quit_app(move || {
+        let _ = slint::quit_event_loop();
+    });
+
+    let weak = window.as_weak();
+    window.on_open_project_guide(move || {
+        let target = repo_root().join("README.md");
+        let result = open_path(&target);
+        if let Some(window) = weak.upgrade() {
+            match result {
+                Ok(_) => window.set_status_text("Opened project guide".into()),
+                Err(error) => {
+                    window.set_status_text(format!("Could not open guide: {error}").into())
+                }
+            }
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_open_local_models_guide(move || {
+        let target = repo_root().join("LOCAL_MODELS_GUIDE.md");
+        let result = open_path(&target);
+        if let Some(window) = weak.upgrade() {
+            match result {
+                Ok(_) => window.set_status_text("Opened local models guide".into()),
+                Err(error) => window
+                    .set_status_text(format!("Could not open local models guide: {error}").into()),
+            }
+        }
+    });
+
+    let weak = window.as_weak();
     let app_for_cancel = Arc::clone(&app);
     let library_for_cancel = library_items.clone();
     let jobs_for_cancel = job_items.clone();
+    let model_state_for_cancel = Arc::clone(&model_state);
     window.on_cancel_job(move |job_id| {
         if job_id.trim().is_empty() {
             return;
@@ -156,6 +207,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_cancel,
                 &jobs_for_cancel,
+                &model_state_for_cancel,
             );
         }
     });
@@ -164,6 +216,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_import = Arc::clone(&app);
     let library_for_import = library_items.clone();
     let jobs_for_import = job_items.clone();
+    let model_state_for_import = Arc::clone(&model_state);
     window.on_import_local(move |path| {
         if path.trim().is_empty() {
             return;
@@ -181,6 +234,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_import,
                 &jobs_for_import,
+                &model_state_for_import,
             );
         }
     });
@@ -204,9 +258,53 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     });
 
     let weak = window.as_weak();
+    let app_for_library_select = Arc::clone(&app);
+    let detail_for_library_select = detail_items.clone();
+    let model_state_for_select = Arc::clone(&model_state);
+    window.on_select_library_item(move |index| {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let selected = {
+            let state = model_state_for_select.lock().expect("model state poisoned");
+            state.get(index).cloned()
+        };
+        if let Some(window) = weak.upgrade() {
+            match selected {
+                Some(model) => {
+                    window.set_selected_library_index(index as i32);
+                    window.set_model_id_input(model.id.clone().into());
+                    window.set_chat_model_id(model.id.clone().into());
+                    match app_for_library_select.model_detail_summary(&model.id) {
+                        Ok(lines) => {
+                            detail_for_library_select.set_vec(
+                                lines
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .collect::<Vec<SharedString>>(),
+                            );
+                            window
+                                .set_status_text(format!("Selected {}", model.display_name).into());
+                        }
+                        Err(error) => window.set_status_text(
+                            format!(
+                                "Selected {}, but detail failed: {error}",
+                                model.display_name
+                            )
+                            .into(),
+                        ),
+                    }
+                }
+                None => window.set_status_text("Model selection out of range".into()),
+            }
+        }
+    });
+
+    let weak = window.as_weak();
     let app_for_prepare = Arc::clone(&app);
     let library_for_prepare = library_items.clone();
     let jobs_for_prepare = job_items.clone();
+    let model_state_for_prepare = Arc::clone(&model_state);
     window.on_prepare_runtime(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -225,6 +323,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_prepare,
                 &jobs_for_prepare,
+                &model_state_for_prepare,
             );
         }
     });
@@ -234,6 +333,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let detail_for_inspect = detail_items.clone();
     let library_for_inspect = library_items.clone();
     let jobs_for_inspect = job_items.clone();
+    let model_state_for_inspect = Arc::clone(&model_state);
     window.on_inspect_model(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -256,6 +356,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_inspect,
                 &jobs_for_inspect,
+                &model_state_for_inspect,
             );
         }
     });
@@ -272,6 +373,8 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                         .lock()
                         .expect("search state poisoned") = results.clone();
                     fill_results(&search_for_search, &results);
+                    window.set_selected_search_index(-1);
+                    window.set_search_index("".into());
                     window
                         .set_status_text(format!("Found {} GGUF artifacts", results.len()).into());
                 }
@@ -281,10 +384,37 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     });
 
     let weak = window.as_weak();
+    let search_state_for_select = Arc::clone(&search_state);
+    window.on_select_search_item(move |index| {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let selected = {
+            let state = search_state_for_select
+                .lock()
+                .expect("search state poisoned");
+            state.get(index).cloned()
+        };
+        if let Some(window) = weak.upgrade() {
+            match selected {
+                Some(file) => {
+                    window.set_selected_search_index(index as i32);
+                    window.set_search_index((index + 1).to_string().into());
+                    window.set_status_text(
+                        format!("Selected result #{}: {}", index + 1, file.filename).into(),
+                    );
+                }
+                None => window.set_status_text("Search result selection out of range".into()),
+            }
+        }
+    });
+
+    let weak = window.as_weak();
     let app_for_hf_download = Arc::clone(&app);
     let search_state_for_download = Arc::clone(&search_state);
     let library_for_hf_download = library_items.clone();
     let jobs_for_hf_download = job_items.clone();
+    let model_state_for_hf_download = Arc::clone(&model_state);
     window.on_download_search_result(move |index| {
         let Ok(index) = index.trim().parse::<usize>() else {
             if let Some(window) = weak.upgrade() {
@@ -318,6 +448,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_hf_download,
                 &jobs_for_hf_download,
+                &model_state_for_hf_download,
             );
         }
     });
@@ -326,6 +457,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_download = Arc::clone(&app);
     let library_for_download = library_items.clone();
     let jobs_for_download = job_items.clone();
+    let model_state_for_download = Arc::clone(&model_state);
     window.on_download_url(move |url| {
         if url.trim().is_empty() {
             return;
@@ -342,6 +474,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &window,
                 &library_for_download,
                 &jobs_for_download,
+                &model_state_for_download,
             );
         }
     });
@@ -363,6 +496,7 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let app_for_cache = Arc::clone(&app);
     let library_for_cache = library_items.clone();
     let jobs_for_cache = job_items.clone();
+    let model_state_for_cache = Arc::clone(&model_state);
     window.on_clear_cache(move |model_id| {
         if model_id.trim().is_empty() {
             return;
@@ -374,7 +508,13 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                     window.set_status_text(format!("Failed to clear cache: {error}").into())
                 }
             }
-            let _ = refresh_models(&app_for_cache, &window, &library_for_cache, &jobs_for_cache);
+            let _ = refresh_models(
+                &app_for_cache,
+                &window,
+                &library_for_cache,
+                &jobs_for_cache,
+                &model_state_for_cache,
+            );
         }
     });
 
@@ -383,7 +523,15 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let chat_for_chat = chat_items.clone();
     let chat_state_for_chat = Arc::clone(&chat_state);
     window.on_send_prompt(move |model_id, prompt| {
-        if model_id.trim().is_empty() || prompt.trim().is_empty() {
+        if prompt.trim().is_empty() {
+            return;
+        }
+
+        if model_id.trim().is_empty() {
+            if let Some(window) = weak.upgrade() {
+                window.set_selected_view(1);
+                window.set_status_text("Select a model in Models before chatting".into());
+            }
             return;
         }
 
@@ -392,6 +540,11 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
             state.push(format!("User: {}", prompt.trim()).into());
             state.push("Assistant:".into());
             chat_for_chat.set_vec(state.clone());
+        }
+
+        if let Some(window) = weak.upgrade() {
+            window.set_chat_prompt("".into());
+            window.set_status_text("Starting generation".into());
         }
 
         let app = Arc::clone(&app_for_chat);
@@ -465,7 +618,9 @@ fn refresh_models(
     window: &AppWindow,
     library_items: &VecModel<SharedString>,
     job_items: &VecModel<SharedString>,
+    model_state: &Arc<Mutex<Vec<ModelRecord>>>,
 ) -> Result<()> {
+    *model_state.lock().expect("model state poisoned") = app.list_models()?;
     library_items.set_vec(
         app.list_model_summaries()?
             .into_iter()
@@ -515,4 +670,14 @@ fn fill_results(model: &VecModel<SharedString>, results: &[HuggingFaceFile]) {
             })
             .collect::<Vec<SharedString>>(),
     );
+}
+
+fn repo_root() -> PathBuf {
+    let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    fallback.canonicalize().unwrap_or(fallback)
+}
+
+fn open_path(path: &std::path::Path) -> Result<()> {
+    Command::new("open").arg(path).status()?;
+    Ok(())
 }

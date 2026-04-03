@@ -1,4 +1,4 @@
-import { ListView, Button, LineEdit, TextEdit } from "std-widgets.slint";
+import { ListView, Button, LineEdit } from "std-widgets.slint";
 
 component PillButton inherits Rectangle {
     in property <string> label;
@@ -176,26 +176,37 @@ component QuickTile inherits Rectangle {
 component StreamRow inherits Rectangle {
     in property <string> value;
     in property <bool> alternate;
+    in property <bool> selected: false;
+    in property <bool> interactive: false;
     in property <brush> fill;
     in property <brush> alternate-fill;
+    in property <brush> selected-fill: #ffffff14;
     in property <color> edge;
     in property <color> text-color;
+    callback invoke();
 
-    height: 64px;
+    height: 84px;
     border-radius: 16px;
-    background: alternate ? alternate-fill : fill;
+    background: selected ? selected-fill : (alternate ? alternate-fill : fill);
     border-width: 1px;
     border-color: edge;
 
     Text {
         x: 16px;
-        y: 14px;
+        y: 12px;
         width: parent.width - 32px;
+        height: parent.height - 24px;
         text: value;
         color: text-color;
         font-size: 13px;
         wrap: word-wrap;
         font-family: "SF Pro Display";
+    }
+
+    touch := TouchArea {
+        enabled: root.interactive;
+        mouse-cursor: root.interactive ? pointer : default;
+        clicked => { root.invoke(); }
     }
 }
 
@@ -235,6 +246,46 @@ component EmptyState inherits Rectangle {
     }
 }
 
+component SidebarItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <brush> selected-fill;
+    in property <brush> idle-fill;
+    in property <color> title-color;
+    in property <color> body-color;
+    callback invoke();
+
+    height: 40px;
+    border-radius: 14px;
+    background: selected ? selected-fill : idle-fill;
+    border-width: selected ? 0px : 1px;
+    border-color: #ffffff10;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 0px;
+
+        Text {
+            text: root.label;
+            color: root.title-color;
+            font-size: 13px;
+            font-weight: 700;
+            font-family: "SF Pro Display";
+        }
+
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.invoke(); }
+    }
+}
+
 export component AppWindow inherits Window {
     preferred-width: 1440px;
     preferred-height: 920px;
@@ -244,6 +295,7 @@ export component AppWindow inherits Window {
     resize-border-width: 7px;
     background: #00000000;
     title: "TritPack Desktop";
+    forward-focus: shortcut-scope;
 
     in property <[string]> library-items;
     in property <[string]> job-items;
@@ -263,6 +315,8 @@ export component AppWindow inherits Window {
     in-out property <string> chat-prompt: "";
     in-out property <int> selected-view: 0;
     in-out property <int> theme-mode: 0;
+    in-out property <int> selected-library-index: -1;
+    in-out property <int> selected-search-index: -1;
 
     callback refresh();
     callback import-local(string);
@@ -281,833 +335,814 @@ export component AppWindow inherits Window {
     callback minimize-window();
     callback toggle-maximize-window();
     callback begin-window-drag();
+    callback quit-app();
+    callback show-about();
+    callback open-project-guide();
+    callback open-local-models-guide();
+    callback select-library-item(int);
+    callback select-search-item(int);
 
-    property <bool> work-mode: root.selected-view != 0;
-    property <string> page-title:
-        root.selected-view == 1 ? "Library"
-        : root.selected-view == 2 ? "Discover"
-        : root.selected-view == 3 ? "Queue"
-        : root.selected-view == 4 ? "Model Detail"
-        : "Settings";
-    property <string> page-subtitle:
-        root.selected-view == 1 ? "Import GGUF models, inspect them, and move them into the TritPack workflow."
-        : root.selected-view == 2 ? "Search Hugging Face or paste a direct GGUF URL to download new models."
-        : root.selected-view == 3 ? "Track downloads, conversions, verification, and runtime preparation in one place."
-        : root.selected-view == 4 ? "Inspect metadata, artifact sizes, and cached runtime readiness."
-        : "Configure account access, theme, and runtime diagnostics for the llama.cpp release path.";
+    MenuBar {
+        Menu {
+            title: "TritPack";
 
-    property <brush> app-background: root.theme-mode == 0
-        ? @linear-gradient(180deg, #5835ebd8 0%, #273db8cc 32%, #102d74c5 70%, #0b1b47bf 100%)
-        : @linear-gradient(180deg, #090909e2 0%, #020202d8 100%);
-    property <brush> shell-fill: root.theme-mode == 0
-        ? @linear-gradient(180deg, #2a2351d7 0%, #1c2a58db 100%)
-        : @linear-gradient(180deg, #121212e4 0%, #090909e8 100%);
-    property <brush> shell-inner: root.theme-mode == 0 ? #ffffff0a : #ffffff06;
-    property <brush> panel-fill: root.theme-mode == 0 ? #ffffff12 : #111111d2;
-    property <brush> panel-strong: root.theme-mode == 0 ? #ffffff16 : #1a1a1ad6;
-    property <brush> panel-soft: root.theme-mode == 0 ? #ffffff10 : #0f0f0fd2;
-    property <brush> chip-fill: root.theme-mode == 0 ? #191d37da : #121212;
-    property <brush> chip-active: root.theme-mode == 0 ? #3d456fe6 : #292929;
-    property <brush> composer-fill: root.theme-mode == 0 ? #313650c8 : #181818d0;
-    property <brush> row-fill: root.theme-mode == 0 ? #ffffff08 : #121212;
-    property <brush> row-alt-fill: root.theme-mode == 0 ? #ffffff05 : #0c0c0c;
+            MenuItem {
+                title: "About TritPack";
+                activated => { root.show-about(); }
+            }
+
+            MenuItem {
+                title: "Settings...";
+                activated => { root.selected-view = 5; }
+            }
+
+            MenuSeparator {}
+
+            MenuItem {
+                title: "Quit TritPack";
+                activated => { root.quit-app(); }
+            }
+        }
+
+        Menu {
+            title: "File";
+
+            MenuItem {
+                title: "Queue";
+                activated => { root.selected-view = 3; }
+            }
+
+            MenuItem {
+                title: "Runtime";
+                activated => { root.selected-view = 4; }
+            }
+
+            MenuItem {
+                title: "Settings...";
+                activated => { root.selected-view = 5; }
+            }
+
+            MenuSeparator {}
+
+            MenuItem {
+                title: "Close Window";
+                activated => { root.close-window(); }
+            }
+        }
+
+        Menu {
+            title: "Models";
+
+            MenuItem {
+                title: "Models";
+                activated => { root.selected-view = 1; }
+            }
+
+            MenuItem {
+                title: "Discover";
+                activated => { root.selected-view = 2; }
+            }
+        }
+
+        Menu {
+            title: "Edit";
+
+            MenuItem { title: "Cut"; enabled: false; }
+            MenuItem { title: "Copy"; enabled: false; }
+            MenuItem { title: "Paste"; enabled: false; }
+            MenuItem { title: "Select All"; enabled: false; }
+        }
+
+        Menu {
+            title: "View";
+
+            MenuItem {
+                title: "Chat";
+                activated => { root.selected-view = 0; }
+            }
+
+            MenuItem {
+                title: "Configure";
+                activated => {
+                    root.selected-view = root.selected-view == 0 ? 1 : root.selected-view;
+                }
+            }
+
+            MenuSeparator {}
+
+            MenuItem {
+                title: "Refresh";
+                activated => { root.refresh(); }
+            }
+
+            MenuItem {
+                title: "Toggle Theme";
+                activated => { root.theme-mode = root.theme-mode == 0 ? 1 : 0; }
+            }
+        }
+
+        Menu {
+            title: "Window";
+
+            MenuItem {
+                title: "Minimize";
+                activated => { root.minimize-window(); }
+            }
+
+            MenuItem {
+                title: "Zoom";
+                activated => { root.toggle-maximize-window(); }
+            }
+        }
+
+        Menu {
+            title: "Help";
+
+            MenuItem {
+                title: "Project Guide";
+                activated => { root.open-project-guide(); }
+            }
+
+            MenuItem {
+                title: "Local Models Guide";
+                activated => { root.open-local-models-guide(); }
+            }
+        }
+    }
+
+    property <bool> chat-mode: root.selected-view == 0;
+    property <bool> models-mode: root.selected-view == 1 || root.selected-view == 2;
+    property <bool> configure-mode: root.selected-view >= 3;
+    property <brush> app-background: root.theme-mode == 0 ? #2a2d33 : #0f1012;
+    property <brush> shell-fill: root.theme-mode == 0 ? #1e2127 : #0b0b0c;
+    property <brush> shell-inner: root.theme-mode == 0 ? #262a31 : #141517;
+    property <brush> panel-fill: root.theme-mode == 0 ? #30343c : #17181a;
+    property <brush> panel-strong: root.theme-mode == 0 ? #353941 : #1b1c1f;
+    property <brush> panel-soft: root.theme-mode == 0 ? #25282e : #121315;
+    property <brush> chip-fill: root.theme-mode == 0 ? #181a1f : #0f1012;
+    property <brush> chip-active: root.theme-mode == 0 ? #5e6470 : #303236;
+    property <brush> composer-fill: root.theme-mode == 0 ? #2d3138 : #17181a;
+    property <brush> row-fill: root.theme-mode == 0 ? #3a3f47 : #17181a;
+    property <brush> row-alt-fill: root.theme-mode == 0 ? #343940 : #131417;
+    property <brush> row-selected-fill: root.theme-mode == 0 ? #545a66 : #2a2d31;
     property <brush> orb-fill: root.theme-mode == 0
-        ? @radial-gradient(circle, #f2fbff 0%, #dff6ff 42%, #bfe7ff 70%, #a4d6ff 100%)
-        : @radial-gradient(circle, #fafafa 0%, #d8d8d8 100%);
-    property <color> shell-edge: root.theme-mode == 0 ? #ffffff18 : #ffffff10;
-    property <color> accent-edge: root.theme-mode == 0 ? #91cbff22 : #ffffff10;
-    property <color> text-primary: #f7f8fb;
-    property <color> text-secondary: root.theme-mode == 0 ? #d7dcef : #b7b7b7;
-    property <color> text-muted: root.theme-mode == 0 ? #97a2c0 : #787878;
-    property <color> accent-text: root.theme-mode == 0 ? #dff3ff : #ffffff;
+        ? @radial-gradient(circle, #f3f5f8 0%, #d6dbe3 52%, #b6bfcb 100%)
+        : @radial-gradient(circle, #fbfbfb 0%, #d4d4d4 100%);
+    property <color> shell-edge: root.theme-mode == 0 ? #ffffff16 : #ffffff10;
+    property <color> accent-edge: root.theme-mode == 0 ? #ffffff10 : #ffffff10;
+    property <color> text-primary: #f6f7fb;
+    property <color> text-secondary: root.theme-mode == 0 ? #cfd4dd : #b8b8b8;
+    property <color> text-muted: root.theme-mode == 0 ? #98a0ab : #777777;
 
     Rectangle {
         width: 100%;
         height: 100%;
         background: #00000000;
 
-        PanelCard {
-            x: 4px;
-            y: 4px;
-            width: parent.width - 8px;
-            height: parent.height - 8px;
-            fill: root.shell-fill;
-            edge: root.shell-edge;
-            radius: 24px;
+        shortcut-scope := FocusScope {
+            width: parent.width;
+            height: parent.height;
 
-            Rectangle {
-                width: parent.width;
-                height: parent.height;
-                background: root.app-background;
-
-                if (root.theme-mode == 0) : Rectangle {
-                    x: -140px;
-                    y: parent.height - 310px;
-                    width: 420px;
-                    height: 240px;
-                    border-radius: 120px;
-                    background: #d8f2ff1d;
+            key-pressed(event) => {
+                if ((event.modifiers.control || event.modifiers.meta) && event.text == ",") {
+                    root.selected-view = 5;
+                    return accept;
+                } else if ((event.modifiers.control || event.modifiers.meta) && (event.text == "w" || event.text == "W")) {
+                    root.close-window();
+                    return accept;
+                } else if ((event.modifiers.control || event.modifiers.meta) && (event.text == "m" || event.text == "M")) {
+                    root.minimize-window();
+                    return accept;
+                } else if ((event.modifiers.control || event.modifiers.meta) && (event.text == "q" || event.text == "Q")) {
+                    root.quit-app();
+                    return accept;
                 }
+                reject
+            }
 
-                if (root.theme-mode == 0) : Rectangle {
-                    x: parent.width - 250px;
-                    y: -60px;
-                    width: 290px;
-                    height: 210px;
-                    border-radius: 120px;
-                    background: #9ad8ff12;
-                }
+            PanelCard {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: parent.height - 8px;
+                fill: root.shell-fill;
+                edge: root.shell-edge;
+                radius: 24px;
 
-                VerticalLayout {
+                Rectangle {
                     width: parent.width;
                     height: parent.height;
-                    padding: 20px;
-                    spacing: 16px;
+                    background: root.app-background;
 
-                    Rectangle {
-                        height: 44px;
-                        background: #00000000;
+                    VerticalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        padding: 18px;
+                        spacing: 16px;
 
-                        TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            mouse-cursor: grab;
-                            pointer-event(event) => {
-                                if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                                    root.begin-window-drag();
+                        Rectangle {
+                            height: 44px;
+                            background: #00000000;
+
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: grab;
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                                        root.begin-window-drag();
+                                    }
                                 }
                             }
-                        }
-
-                        HorizontalLayout {
-                            width: parent.width;
-                            height: parent.height;
-                            spacing: 14px;
 
                             HorizontalLayout {
-                                spacing: 10px;
-
-                                TrafficLight {
-                                    fill: #ff5f57;
-                                    hover-fill: #ff7b74;
-                                    symbol: "×";
-                                    invoke => { root.close-window(); }
-                                }
-
-                                TrafficLight {
-                                    fill: #febc2e;
-                                    hover-fill: #ffd45b;
-                                    symbol: "−";
-                                    invoke => { root.minimize-window(); }
-                                }
-
-                                TrafficLight {
-                                    fill: #28c840;
-                                    hover-fill: #52db6b;
-                                    symbol: "+";
-                                    invoke => { root.toggle-maximize-window(); }
-                                }
-
-                                PillButton {
-                                    label: "TritPack";
-                                    selected: false;
-                                    selected-fill: root.chip-active;
-                                    idle-fill: root.chip-fill;
-                                    selected-text: root.text-primary;
-                                    idle-text: root.text-secondary;
-                                    preferred-width: 94px;
-                                    invoke => { root.selected-view = 0; }
-                                }
-                            }
-
-                            Rectangle { horizontal-stretch: 1; background: #00000000; }
-
-                            Rectangle {
-                                width: 190px;
-                                height: 40px;
-                                border-radius: 20px;
-                                background: root.chip-fill;
-                                border-width: 1px;
-                                border-color: root.shell-edge;
+                                width: parent.width;
+                                height: parent.height;
+                                spacing: 14px;
 
                                 HorizontalLayout {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    padding: 4px;
-                                    spacing: 6px;
+                                    spacing: 10px;
 
-                                    PillButton {
-                                        label: "Chat";
-                                        selected: !root.work-mode;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: #00000000;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        horizontal-stretch: 1;
-                                        invoke => { root.selected-view = 0; }
+                                    TrafficLight {
+                                        fill: #ff5f57;
+                                        hover-fill: #ff7b74;
+                                        symbol: "×";
+                                        invoke => { root.close-window(); }
                                     }
 
-                                    PillButton {
-                                        label: "Configure";
-                                        selected: root.work-mode;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: #00000000;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        horizontal-stretch: 1;
-                                        invoke => { root.selected-view = root.selected-view == 0 ? 1 : root.selected-view; }
+                                    TrafficLight {
+                                        fill: #febc2e;
+                                        hover-fill: #ffd45b;
+                                        symbol: "−";
+                                        invoke => { root.minimize-window(); }
+                                    }
+
+                                    TrafficLight {
+                                        fill: #28c840;
+                                        hover-fill: #52db6b;
+                                        symbol: "+";
+                                        invoke => { root.toggle-maximize-window(); }
                                     }
                                 }
-                            }
 
-                            Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                Rectangle { horizontal-stretch: 1; background: #00000000; }
 
-                            HorizontalLayout {
-                                spacing: 10px;
+                                Rectangle {
+                                    width: 348px;
+                                    height: 40px;
+                                    border-radius: 20px;
+                                    background: root.chip-fill;
+                                    border-width: 1px;
+                                    border-color: root.shell-edge;
+
+                                    HorizontalLayout {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        padding: 4px;
+                                        spacing: 6px;
+
+                                        PillButton {
+                                            label: "Chat";
+                                            selected: root.chat-mode;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
+                                            selected-text: root.text-primary;
+                                            idle-text: root.text-secondary;
+                                            horizontal-stretch: 1;
+                                            invoke => { root.selected-view = 0; }
+                                        }
+
+                                        PillButton {
+                                            label: "Models";
+                                            selected: root.models-mode;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
+                                            selected-text: root.text-primary;
+                                            idle-text: root.text-secondary;
+                                            horizontal-stretch: 1;
+                                            invoke => { root.selected-view = 1; }
+                                        }
+
+                                        PillButton {
+                                            label: "Configure";
+                                            selected: root.configure-mode;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
+                                            selected-text: root.text-primary;
+                                            idle-text: root.text-secondary;
+                                            horizontal-stretch: 1;
+                                            invoke => { root.selected-view = 3; }
+                                        }
+                                    }
+                                }
+
+                                Rectangle { horizontal-stretch: 1; background: #00000000; }
 
                                 IconCircle {
-                                    label: root.theme-mode == 0 ? "◐" : "●";
+                                    label: root.theme-mode == 0 ? "☀" : "☾";
                                     fill: root.chip-fill;
                                     text-color: root.text-secondary;
                                     invoke => { root.theme-mode = root.theme-mode == 0 ? 1 : 0; }
                                 }
-
-                                IconCircle {
-                                    label: "⚙";
-                                    fill: root.chip-fill;
-                                    text-color: root.text-secondary;
-                                    invoke => { root.selected-view = 5; }
-                                }
                             }
                         }
-                    }
 
-                    Rectangle {
-                        vertical-stretch: 1;
-                        background: #00000000;
-
-                        if (!root.work-mode) : Rectangle {
-                            width: parent.width;
-                            height: parent.height;
+                        Rectangle {
+                            vertical-stretch: 1;
                             background: #00000000;
 
-                            if (root.chat-items.length == 0) : VerticalLayout {
-                                x: (parent.width - 760px) / 2;
-                                y: 34px;
-                                width: 760px;
-                                spacing: 20px;
+                            if (root.chat-mode) : Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                background: #00000000;
 
-                                Rectangle {
-                                    x: (parent.width - 92px) / 2;
-                                    width: 92px;
-                                    height: 92px;
-                                    border-radius: 46px;
-                                    background: root.orb-fill;
-                                    drop-shadow-blur: 36px;
-                                    drop-shadow-color: root.theme-mode == 0 ? #d5f7ff8a : #ffffff33;
-                                    drop-shadow-offset-x: 0px;
-                                    drop-shadow-offset-y: 0px;
-
-                                    Rectangle { x: 29px; y: 26px; width: 7px; height: 7px; border-radius: 4px; background: #ffffff99; }
-                                    Rectangle { x: 47px; y: 32px; width: 5px; height: 5px; border-radius: 3px; background: #ffffffdd; }
-                                    Rectangle { x: 39px; y: 49px; width: 6px; height: 6px; border-radius: 3px; background: #ffffffaa; }
-                                }
-
-                                Text {
+                                if (root.chat-items.length == 0) : Rectangle {
                                     width: parent.width;
-                                    horizontal-alignment: center;
-                                    text: "Good afternoon";
-                                    color: root.text-primary;
-                                    font-size: 42px;
-                                    font-weight: 800;
-                                    font-family: "SF Pro Display";
-                                }
-
-                                Text {
-                                    width: parent.width;
-                                    horizontal-alignment: center;
-                                    text: "How can TritPack help you today?";
-                                    color: root.text-secondary;
-                                    font-size: 17px;
-                                    font-family: "SF Pro Display";
-                                }
-
-                                Text {
-                                    width: parent.width;
-                                    horizontal-alignment: center;
-                                    text: "TritPack";
-                                    color: root.accent-text;
-                                    font-size: 15px;
-                                    font-weight: 700;
-                                    font-family: "SF Pro Display";
-                                }
-
-                                Rectangle {
-                                    width: parent.width;
-                                    height: 182px;
+                                    height: parent.height;
                                     background: #00000000;
 
-                                    GridLayout {
+                                    VerticalLayout {
+                                        x: (parent.width - 760px) / 2;
+                                        y: (parent.height - 404px) / 2;
+                                        width: 760px;
+                                        spacing: 18px;
+
+                                        Rectangle {
+                                            x: (parent.width - 92px) / 2;
+                                            width: 92px;
+                                            height: 92px;
+                                            border-radius: 46px;
+                                            background: root.orb-fill;
+                                            drop-shadow-blur: 36px;
+                                            drop-shadow-color: root.theme-mode == 0 ? #d8dee65a : #ffffff1e;
+                                            drop-shadow-offset-x: 0px;
+                                            drop-shadow-offset-y: 0px;
+                                        }
+
+                                        Text {
+                                            width: parent.width;
+                                            horizontal-alignment: center;
+                                            text: "Good afternoon";
+                                            color: root.text-primary;
+                                            font-size: 42px;
+                                            font-weight: 800;
+                                            font-family: "SF Pro Display";
+                                        }
+
+                                        Text {
+                                            width: parent.width;
+                                            horizontal-alignment: center;
+                                            text: "How can TritPack help you today?";
+                                            color: root.text-secondary;
+                                            font-size: 17px;
+                                            font-family: "SF Pro Display";
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width;
+                                            height: 200px;
+                                            background: #00000000;
+
+                                            GridLayout {
+                                                width: parent.width;
+                                                height: parent.height;
+                                                spacing: 14px;
+
+                                                QuickTile {
+                                                    row: 0;
+                                                    col: 0;
+                                                    title: "Import a model";
+                                                    subtitle: "Bring in a local GGUF and move it into the TritPack flow.";
+                                                    icon: "↥";
+                                                    fill: root.panel-fill;
+                                                    edge: root.accent-edge;
+                                                    title-color: root.text-primary;
+                                                    body-color: root.text-secondary;
+                                                    invoke => { root.selected-view = 1; }
+                                                }
+
+                                                QuickTile {
+                                                    row: 0;
+                                                    col: 1;
+                                                    title: "Discover GGUFs";
+                                                    subtitle: "Search Hugging Face repositories and queue downloads.";
+                                                    icon: "⌕";
+                                                    fill: root.panel-fill;
+                                                    edge: root.accent-edge;
+                                                    title-color: root.text-primary;
+                                                    body-color: root.text-secondary;
+                                                    invoke => { root.selected-view = 2; }
+                                                }
+
+                                                QuickTile {
+                                                    row: 1;
+                                                    col: 0;
+                                                    title: "Check the queue";
+                                                    subtitle: "Monitor downloads, conversions, verification, and runtime prep.";
+                                                    icon: "≣";
+                                                    fill: root.panel-fill;
+                                                    edge: root.accent-edge;
+                                                    title-color: root.text-primary;
+                                                    body-color: root.text-secondary;
+                                                    invoke => { root.selected-view = 3; }
+                                                }
+
+                                                QuickTile {
+                                                    row: 1;
+                                                    col: 1;
+                                                    title: "Open settings";
+                                                    subtitle: "Review runtime health, tokens, and release preferences.";
+                                                    icon: "⚙";
+                                                    fill: root.panel-fill;
+                                                    edge: root.accent-edge;
+                                                    title-color: root.text-primary;
+                                                    body-color: root.text-secondary;
+                                                    invoke => { root.selected-view = 5; }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (root.chat-items.length > 0) : PanelCard {
+                                    x: (parent.width - 920px) / 2;
+                                    y: 6px;
+                                    width: 920px;
+                                    height: parent.height - 12px;
+                                    fill: root.panel-soft;
+                                    edge: root.shell-edge;
+                                    radius: 24px;
+
+                                    VerticalLayout {
                                         width: parent.width;
                                         height: parent.height;
-                                        spacing: 14px;
+                                        padding: 18px;
+                                        spacing: 12px;
 
-                                        QuickTile {
-                                            row: 0;
-                                            col: 0;
-                                            title: "Import a model";
-                                            subtitle: "Bring in a local GGUF and move it into the TritPack flow.";
-                                            icon: "↥";
-                                            fill: root.panel-fill;
-                                            edge: root.accent-edge;
+                                        HorizontalLayout {
+                                            SectionTitle { text: "Conversation"; }
+                                            Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                            BodyText { text: root.status-text; }
+                                        }
+
+                                        ListView {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            for item[index] in root.chat-items : StreamRow {
+                                                value: item;
+                                                alternate: Math.mod(index, 2) == 1;
+                                                fill: root.row-fill;
+                                                alternate-fill: root.row-alt-fill;
+                                                edge: root.shell-edge;
+                                                text-color: root.text-primary;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!root.chat-mode) : HorizontalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                spacing: 18px;
+
+                                PanelCard {
+                                    width: 176px;
+                                    fill: root.panel-soft;
+                                    edge: root.shell-edge;
+                                    radius: 22px;
+                                    vertical-stretch: 1;
+
+                                    VerticalLayout {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        if (root.models-mode) : SidebarItem {
+                                            label: "Models";
+                                            selected: root.selected-view == 1;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
                                             title-color: root.text-primary;
                                             body-color: root.text-secondary;
                                             invoke => { root.selected-view = 1; }
                                         }
 
-                                        QuickTile {
-                                            row: 0;
-                                            col: 1;
-                                            title: "Discover GGUFs";
-                                            subtitle: "Search Hugging Face repositories and queue downloads.";
-                                            icon: "⌕";
-                                            fill: root.panel-fill;
-                                            edge: root.accent-edge;
+                                        if (root.models-mode) : SidebarItem {
+                                            label: "Discover";
+                                            selected: root.selected-view == 2;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
                                             title-color: root.text-primary;
                                             body-color: root.text-secondary;
                                             invoke => { root.selected-view = 2; }
                                         }
 
-                                        QuickTile {
-                                            row: 1;
-                                            col: 0;
-                                            title: "Check the queue";
-                                            subtitle: "Monitor downloads, conversions, verification, and runtime prep.";
-                                            icon: "≣";
-                                            fill: root.panel-fill;
-                                            edge: root.accent-edge;
+                                        if (root.configure-mode) : SidebarItem {
+                                            label: "Queue";
+                                            selected: root.selected-view == 3;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
                                             title-color: root.text-primary;
                                             body-color: root.text-secondary;
                                             invoke => { root.selected-view = 3; }
                                         }
 
-                                        QuickTile {
-                                            row: 1;
-                                            col: 1;
-                                            title: "Open settings";
-                                            subtitle: "Review runtime health, tokens, and release preferences.";
-                                            icon: "⚙";
-                                            fill: root.panel-fill;
-                                            edge: root.accent-edge;
+                                        if (root.configure-mode) : SidebarItem {
+                                            label: "Runtime";
+                                            selected: root.selected-view == 4;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
+                                            title-color: root.text-primary;
+                                            body-color: root.text-secondary;
+                                            invoke => { root.selected-view = 4; }
+                                        }
+
+                                        if (root.configure-mode) : SidebarItem {
+                                            label: "Settings";
+                                            selected: root.selected-view == 5;
+                                            selected-fill: root.chip-active;
+                                            idle-fill: #00000000;
                                             title-color: root.text-primary;
                                             body-color: root.text-secondary;
                                             invoke => { root.selected-view = 5; }
                                         }
-                                    }
-                                }
 
-                                PanelCard {
-                                    fill: root.shell-inner;
-                                    edge: root.shell-edge;
-                                    radius: 20px;
-                                    height: 54px;
+                                        Rectangle { vertical-stretch: 1; background: #00000000; }
 
-                                    HorizontalLayout {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        padding: 12px;
-                                        spacing: 12px;
-
-                                        PillButton {
-                                            label: "llama.cpp release";
-                                            selected: true;
-                                            selected-fill: root.chip-active;
-                                            idle-fill: root.chip-fill;
-                                            selected-text: root.text-primary;
-                                            idle-text: root.text-secondary;
-                                            preferred-width: 128px;
-                                            invoke => { }
-                                        }
-
-                                        PillButton {
-                                            label: "GGUF only";
-                                            selected: false;
-                                            selected-fill: root.chip-active;
-                                            idle-fill: root.chip-fill;
-                                            selected-text: root.text-primary;
-                                            idle-text: root.text-secondary;
-                                            preferred-width: 96px;
-                                            invoke => { }
-                                        }
-
-                                        Rectangle { horizontal-stretch: 1; background: #00000000; }
-
-                                        Text {
+                                        BodyText {
                                             text: root.status-text;
-                                            color: root.text-muted;
-                                            font-size: 12px;
-                                            vertical-alignment: center;
-                                            font-family: "SF Pro Display";
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (root.chat-items.length > 0) : PanelCard {
-                                x: (parent.width - 840px) / 2;
-                                y: 18px;
-                                width: 840px;
-                                height: parent.height - 24px;
-                                fill: root.panel-soft;
-                                edge: root.shell-edge;
-                                radius: 24px;
-
-                                VerticalLayout {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    padding: 18px;
-                                    spacing: 12px;
-
-                                    HorizontalLayout {
-                                        SectionTitle { text: "Conversation"; }
-                                        Rectangle { horizontal-stretch: 1; background: #00000000; }
-                                        BodyText { text: root.status-text; }
-                                    }
-
-                                    ListView {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        for item[index] in root.chat-items : StreamRow {
-                                            value: item;
-                                            alternate: Math.mod(index, 2) == 1;
-                                            fill: root.row-fill;
-                                            alternate-fill: root.row-alt-fill;
-                                            edge: root.shell-edge;
-                                            text-color: root.text-primary;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if (root.work-mode) : VerticalLayout {
-                            width: parent.width;
-                            height: parent.height;
-                            spacing: 14px;
-
-                            Rectangle {
-                                height: 80px;
-                                background: #00000000;
-
-                                Text {
-                                    text: root.page-title;
-                                    color: root.text-primary;
-                                    font-size: 30px;
-                                    font-weight: 800;
-                                    font-family: "SF Pro Display";
-                                }
-
-                                Text {
-                                    y: 40px;
-                                    width: parent.width - 340px;
-                                    text: root.page-subtitle;
-                                    color: root.text-secondary;
-                                    font-size: 14px;
-                                    font-family: "SF Pro Display";
-                                }
-
-                                PanelCard {
-                                    x: parent.width - 280px;
-                                    y: 4px;
-                                    width: 220px;
-                                    height: 52px;
-                                    fill: root.panel-soft;
-                                    edge: root.shell-edge;
-                                    radius: 18px;
-
-                                    Text {
-                                        x: 14px;
-                                        y: 9px;
-                                        width: parent.width - 28px;
-                                        text: root.status-text;
-                                        color: root.text-secondary;
-                                        font-size: 11px;
-                                        wrap: word-wrap;
-                                        font-family: "SF Pro Display";
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                height: 40px;
-                                background: #00000000;
-
-                                HorizontalLayout {
-                                    spacing: 10px;
-
-                                    PillButton {
-                                        label: "Library";
-                                        selected: root.selected-view == 1;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: root.chip-fill;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        preferred-width: 92px;
-                                        invoke => { root.selected-view = 1; }
-                                    }
-
-                                    PillButton {
-                                        label: "Discover";
-                                        selected: root.selected-view == 2;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: root.chip-fill;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        preferred-width: 100px;
-                                        invoke => { root.selected-view = 2; }
-                                    }
-
-                                    PillButton {
-                                        label: "Queue";
-                                        selected: root.selected-view == 3;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: root.chip-fill;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        preferred-width: 84px;
-                                        invoke => { root.selected-view = 3; }
-                                    }
-
-                                    PillButton {
-                                        label: "Model Detail";
-                                        selected: root.selected-view == 4;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: root.chip-fill;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        preferred-width: 118px;
-                                        invoke => { root.selected-view = 4; }
-                                    }
-
-                                    PillButton {
-                                        label: "Settings";
-                                        selected: root.selected-view == 5;
-                                        selected-fill: root.chip-active;
-                                        idle-fill: root.chip-fill;
-                                        selected-text: root.text-primary;
-                                        idle-text: root.text-secondary;
-                                        preferred-width: 92px;
-                                        invoke => { root.selected-view = 5; }
-                                    }
-                                }
-                            }
-
-                            if (root.selected-view == 1) : VerticalLayout {
-                                spacing: 14px;
-
-                                PanelCard {
-                                    fill: root.panel-strong;
-                                    edge: root.shell-edge;
-                                    radius: 22px;
-                                    height: 110px;
-
-                                    VerticalLayout {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            LineEdit { text <=> root.import-path; placeholder-text: "Path to local .gguf"; horizontal-stretch: 1; }
-                                            Button { text: "Import"; clicked => { root.import-local(root.import-path); } }
-                                            Button { text: "Refresh"; clicked => { root.refresh(); } }
-                                        }
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            LineEdit { text <=> root.model-id-input; placeholder-text: "Model ID"; horizontal-stretch: 1; }
-                                            Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); root.selected-view = 4; } }
-                                            Button { text: "Convert"; clicked => { root.queue-convert(root.model-id-input); } }
-                                            Button { text: "Prepare"; clicked => { root.prepare-runtime(root.model-id-input); } }
-                                            Button { text: "Clear Cache"; clicked => { root.clear-cache(root.model-id-input); } }
+                                            wrap: word-wrap;
                                         }
                                     }
                                 }
 
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
-                                    vertical-stretch: 1;
-
-                                    if (root.library-items.length == 0) : EmptyState {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        title: "No models imported yet";
-                                        body: "Import a GGUF model to start building your TritPack desktop library.";
-                                        title-color: root.text-primary;
-                                        body-color: root.text-secondary;
-                                    }
-
-                                    if (root.library-items.length > 0) : ListView {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        for item[index] in root.library-items : StreamRow {
-                                            value: item;
-                                            alternate: Math.mod(index, 2) == 1;
-                                            fill: root.row-fill;
-                                            alternate-fill: root.row-alt-fill;
-                                            edge: root.shell-edge;
-                                            text-color: root.text-primary;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (root.selected-view == 2) : VerticalLayout {
-                                spacing: 14px;
-
-                                PanelCard {
-                                    fill: root.panel-strong;
-                                    edge: root.shell-edge;
-                                    radius: 22px;
-                                    height: 150px;
-
-                                    VerticalLayout {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            LineEdit { text <=> root.hf-query; placeholder-text: "Search Hugging Face for GGUF"; horizontal-stretch: 1; }
-                                            Button { text: "Search"; clicked => { root.search-models(root.hf-query); } }
-                                        }
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            LineEdit { text <=> root.search-index; placeholder-text: "Search result #"; horizontal-stretch: 1; }
-                                            Button { text: "Download Result"; clicked => { root.download-search-result(root.search-index); } }
-                                        }
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            LineEdit { text <=> root.direct-url; placeholder-text: "Direct GGUF URL"; horizontal-stretch: 1; }
-                                            Button { text: "Download URL"; clicked => { root.download-url(root.direct-url); } }
-                                        }
-                                    }
-                                }
-
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
-                                    vertical-stretch: 1;
-
-                                    if (root.search-items.length == 0) : EmptyState {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        title: "No search results yet";
-                                        body: "Search for a GGUF model on Hugging Face or paste a direct artifact URL.";
-                                        title-color: root.text-primary;
-                                        body-color: root.text-secondary;
-                                    }
-
-                                    if (root.search-items.length > 0) : ListView {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        for item[index] in root.search-items : StreamRow {
-                                            value: item;
-                                            alternate: Math.mod(index, 2) == 1;
-                                            fill: root.row-fill;
-                                            alternate-fill: root.row-alt-fill;
-                                            edge: root.shell-edge;
-                                            text-color: root.text-primary;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (root.selected-view == 3) : VerticalLayout {
-                                spacing: 14px;
-
-                                PanelCard {
-                                    fill: root.panel-strong;
-                                    edge: root.shell-edge;
-                                    radius: 22px;
-                                    height: 72px;
-
-                                    HorizontalLayout {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        LineEdit { text <=> root.job-id-input; placeholder-text: "Job ID"; horizontal-stretch: 1; }
-                                        Button { text: "Cancel"; clicked => { root.cancel-job(root.job-id-input); } }
-                                        Button { text: "Refresh"; clicked => { root.refresh(); } }
-                                    }
-                                }
-
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
-                                    vertical-stretch: 1;
-
-                                    if (root.job-items.length == 0) : EmptyState {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        title: "No jobs in flight";
-                                        body: "Queue a download, conversion, or runtime preparation job to populate this view.";
-                                        title-color: root.text-primary;
-                                        body-color: root.text-secondary;
-                                    }
-
-                                    if (root.job-items.length > 0) : ListView {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        for item[index] in root.job-items : StreamRow {
-                                            value: item;
-                                            alternate: Math.mod(index, 2) == 1;
-                                            fill: root.row-fill;
-                                            alternate-fill: root.row-alt-fill;
-                                            edge: root.shell-edge;
-                                            text-color: root.text-primary;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (root.selected-view == 4) : VerticalLayout {
-                                spacing: 14px;
-
-                                PanelCard {
-                                    fill: root.panel-strong;
-                                    edge: root.shell-edge;
-                                    radius: 22px;
-                                    height: 72px;
-
-                                    HorizontalLayout {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        LineEdit { text <=> root.model-id-input; placeholder-text: "Model ID"; horizontal-stretch: 1; }
-                                        Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); } }
-                                        Button { text: "Prepare"; clicked => { root.prepare-runtime(root.model-id-input); } }
-                                    }
-                                }
-
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
-                                    vertical-stretch: 1;
-
-                                    if (root.detail-items.length == 0) : EmptyState {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        title: "No model detail loaded";
-                                        body: "Inspect a model to surface metadata, artifact sizes, and runtime preparation info.";
-                                        title-color: root.text-primary;
-                                        body-color: root.text-secondary;
-                                    }
-
-                                    if (root.detail-items.length > 0) : ListView {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        for item[index] in root.detail-items : StreamRow {
-                                            value: item;
-                                            alternate: Math.mod(index, 2) == 1;
-                                            fill: root.row-fill;
-                                            alternate-fill: root.row-alt-fill;
-                                            edge: root.shell-edge;
-                                            text-color: root.text-primary;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (root.selected-view == 5) : HorizontalLayout {
-                                spacing: 14px;
-                                vertical-stretch: 1;
-
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
+                                Rectangle {
                                     horizontal-stretch: 1;
                                     vertical-stretch: 1;
+                                    background: #00000000;
 
-                                    VerticalLayout {
-                                        padding: 16px;
-                                        spacing: 12px;
+                                    if (root.selected-view == 1) : HorizontalLayout {
+                                        spacing: 16px;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
 
-                                        SectionTitle { text: "Account & Theme"; }
-                                        BodyText { text: "Save your Hugging Face token and switch between the release themes."; }
-                                        LineEdit { text <=> root.hf-token; placeholder-text: "Hugging Face token"; }
-                                        Button { text: "Save Token"; clicked => { root.save-token(root.hf-token); } }
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-
-                                            PillButton {
-                                                label: "Liquid Glass";
-                                                selected: root.theme-mode == 0;
-                                                selected-fill: root.chip-active;
-                                                idle-fill: root.chip-fill;
-                                                selected-text: root.text-primary;
-                                                idle-text: root.text-secondary;
-                                                horizontal-stretch: 1;
-                                                invoke => { root.theme-mode = 0; }
-                                            }
-
-                                            PillButton {
-                                                label: "Blackout";
-                                                selected: root.theme-mode == 1;
-                                                selected-fill: root.chip-active;
-                                                idle-fill: root.chip-fill;
-                                                selected-text: root.text-primary;
-                                                idle-text: root.text-secondary;
-                                                horizontal-stretch: 1;
-                                                invoke => { root.theme-mode = 1; }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                PanelCard {
-                                    fill: root.panel-fill;
-                                    edge: root.shell-edge;
-                                    horizontal-stretch: 1;
-                                    vertical-stretch: 1;
-
-                                    VerticalLayout {
-                                        padding: 16px;
-                                        spacing: 12px;
-
-                                        HorizontalLayout {
-                                            SectionTitle { text: "Runtime Diagnostics"; }
-                                            Rectangle { horizontal-stretch: 1; background: #00000000; }
-                                            Button { text: "Refresh"; clicked => { root.refresh-runtime(); } }
-                                        }
-
-                                        Rectangle {
+                                        PanelCard {
+                                            width: 400px;
+                                            fill: root.panel-fill;
+                                            edge: root.shell-edge;
+                                            radius: 22px;
                                             vertical-stretch: 1;
-                                            background: #00000000;
 
-                                            if (root.runtime-items.length == 0) : EmptyState {
+                                            VerticalLayout {
+                                                padding: 16px;
+                                                spacing: 12px;
+
+                                                HorizontalLayout {
+                                                    SectionTitle { text: "Your Models"; }
+                                                    Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                                    Button { text: "Refresh"; clicked => { root.refresh(); } }
+                                                }
+
+                                                BodyText { text: "Select a model here. Chat will use the current selection."; }
+
+                                                Rectangle {
+                                                    vertical-stretch: 1;
+                                                    background: #00000000;
+
+                                                    if (root.library-items.length == 0) : EmptyState {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        title: "No models imported yet";
+                                                        body: "Import a GGUF model below, or use Discover to download one first.";
+                                                        title-color: root.text-primary;
+                                                        body-color: root.text-secondary;
+                                                    }
+
+                                                    if (root.library-items.length > 0) : ListView {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        for item[index] in root.library-items : StreamRow {
+                                                            value: item;
+                                                            alternate: Math.mod(index, 2) == 1;
+                                                            selected: index == root.selected-library-index;
+                                                            interactive: true;
+                                                            fill: root.row-fill;
+                                                            alternate-fill: root.row-alt-fill;
+                                                            selected-fill: root.row-selected-fill;
+                                                            edge: root.shell-edge;
+                                                            text-color: root.text-primary;
+                                                            invoke => { root.select-library-item(index); }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 16px;
+
+                                            PanelCard {
+                                                fill: root.panel-strong;
+                                                edge: root.shell-edge;
+                                                radius: 22px;
+                                                height: 126px;
+
+                                                VerticalLayout {
+                                                    padding: 16px;
+                                                    spacing: 12px;
+
+                                                    SectionTitle { text: "Import Local GGUF"; }
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        LineEdit { text <=> root.import-path; placeholder-text: "/path/to/model.gguf"; horizontal-stretch: 1; }
+                                                        Button { text: "Import"; clicked => { root.import-local(root.import-path); } }
+                                                    }
+                                                }
+                                            }
+
+                                            PanelCard {
+                                                fill: root.panel-fill;
+                                                edge: root.shell-edge;
+                                                radius: 22px;
+                                                vertical-stretch: 1;
+
+                                                VerticalLayout {
+                                                    padding: 16px;
+                                                    spacing: 12px;
+
+                                                    SectionTitle { text: "Selected Model"; }
+
+                                                    Text {
+                                                        height: 56px;
+                                                        horizontal-stretch: 1;
+                                                        text: root.model-id-input == "" ? "No model selected" : root.model-id-input;
+                                                        color: root.text-primary;
+                                                        font-size: 15px;
+                                                        font-weight: 700;
+                                                        wrap: word-wrap;
+                                                        font-family: "SF Pro Display";
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        Button { text: "Open in Chat"; clicked => { root.selected-view = 0; } }
+                                                        Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); root.selected-view = 4; } }
+                                                        Button { text: "Convert"; clicked => { root.queue-convert(root.model-id-input); } }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        Button { text: "Prepare"; clicked => { root.prepare-runtime(root.model-id-input); } }
+                                                        Button { text: "Clear Cache"; clicked => { root.clear-cache(root.model-id-input); } }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (root.selected-view == 2) : VerticalLayout {
+                                        spacing: 16px;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        HorizontalLayout {
+                                            spacing: 16px;
+                                            height: 164px;
+
+                                            PanelCard {
+                                                fill: root.panel-strong;
+                                                edge: root.shell-edge;
+                                                radius: 22px;
+                                                horizontal-stretch: 1;
+
+                                                VerticalLayout {
+                                                    padding: 16px;
+                                                    spacing: 12px;
+
+                                                    SectionTitle { text: "Search Hugging Face"; }
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        LineEdit { text <=> root.hf-query; placeholder-text: "e.g. llama 3 gguf"; horizontal-stretch: 1; }
+                                                        Button { text: "Search"; clicked => { root.search-models(root.hf-query); } }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        LineEdit { text <=> root.search-index; placeholder-text: "Selected result #"; horizontal-stretch: 1; }
+                                                        Button { text: "Download Selected"; clicked => { root.download-search-result(root.search-index); } }
+                                                    }
+                                                }
+                                            }
+
+                                            PanelCard {
+                                                fill: root.panel-strong;
+                                                edge: root.shell-edge;
+                                                radius: 22px;
+                                                horizontal-stretch: 1;
+
+                                                VerticalLayout {
+                                                    padding: 16px;
+                                                    spacing: 12px;
+
+                                                    SectionTitle { text: "Direct GGUF URL"; }
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        LineEdit { text <=> root.direct-url; placeholder-text: "https://.../model.gguf"; horizontal-stretch: 1; }
+                                                        Button { text: "Download"; clicked => { root.download-url(root.direct-url); } }
+                                                    }
+
+                                                    BodyText { text: "Downloads will appear in Models after the queue finishes."; }
+                                                }
+                                            }
+                                        }
+
+                                        PanelCard {
+                                            fill: root.panel-fill;
+                                            edge: root.shell-edge;
+                                            vertical-stretch: 1;
+
+                                            VerticalLayout {
+                                                padding: 16px;
+                                                spacing: 12px;
+
+                                                SectionTitle { text: "Search Results"; }
+
+                                                Rectangle {
+                                                    vertical-stretch: 1;
+                                                    background: #00000000;
+
+                                                    if (root.search-items.length == 0) : EmptyState {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        title: "No search results yet";
+                                                        body: "Search Hugging Face for a GGUF model or paste a direct artifact URL.";
+                                                        title-color: root.text-primary;
+                                                        body-color: root.text-secondary;
+                                                    }
+
+                                                    if (root.search-items.length > 0) : ListView {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        for item[index] in root.search-items : StreamRow {
+                                                            value: item;
+                                                            alternate: Math.mod(index, 2) == 1;
+                                                            selected: index == root.selected-search-index;
+                                                            interactive: true;
+                                                            fill: root.row-fill;
+                                                            alternate-fill: root.row-alt-fill;
+                                                            selected-fill: root.row-selected-fill;
+                                                            edge: root.shell-edge;
+                                                            text-color: root.text-primary;
+                                                            invoke => { root.select-search-item(index); }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (root.selected-view == 3) : VerticalLayout {
+                                        spacing: 14px;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        PanelCard {
+                                            fill: root.panel-strong;
+                                            edge: root.shell-edge;
+                                            radius: 22px;
+                                            height: 72px;
+
+                                            HorizontalLayout {
                                                 width: parent.width;
                                                 height: parent.height;
-                                                title: "No runtime diagnostics";
-                                                body: "Refresh to inspect the worker, bundled runtime, and current macOS desktop setup.";
+                                                padding: 14px;
+                                                spacing: 10px;
+
+                                                LineEdit { text <=> root.job-id-input; placeholder-text: "Job ID"; horizontal-stretch: 1; }
+                                                Button { text: "Cancel"; clicked => { root.cancel-job(root.job-id-input); } }
+                                                Button { text: "Refresh"; clicked => { root.refresh(); } }
+                                            }
+                                        }
+
+                                        PanelCard {
+                                            fill: root.panel-fill;
+                                            edge: root.shell-edge;
+                                            vertical-stretch: 1;
+
+                                            if (root.job-items.length == 0) : EmptyState {
+                                                width: parent.width;
+                                                height: parent.height;
+                                                title: "No jobs in flight";
+                                                body: "Queue a download, conversion, or runtime preparation job to populate this view.";
                                                 title-color: root.text-primary;
                                                 body-color: root.text-secondary;
                                             }
 
-                                            if (root.runtime-items.length > 0) : ListView {
+                                            if (root.job-items.length > 0) : ListView {
                                                 width: parent.width;
                                                 height: parent.height;
-                                                for item[index] in root.runtime-items : StreamRow {
+                                                for item[index] in root.job-items : StreamRow {
                                                     value: item;
                                                     alternate: Math.mod(index, 2) == 1;
                                                     fill: root.row-fill;
@@ -1118,76 +1153,199 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                     }
+
+                                    if (root.selected-view == 4) : HorizontalLayout {
+                                        spacing: 16px;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        PanelCard {
+                                            fill: root.panel-fill;
+                                            edge: root.shell-edge;
+                                            horizontal-stretch: 1;
+                                            vertical-stretch: 1;
+
+                                            VerticalLayout {
+                                                padding: 16px;
+                                                spacing: 12px;
+
+                                                HorizontalLayout {
+                                                    SectionTitle { text: "Selected Model Detail"; }
+                                                    Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                                    Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); } }
+                                                    Button { text: "Prepare"; clicked => { root.prepare-runtime(root.model-id-input); } }
+                                                }
+
+                                                Rectangle {
+                                                    vertical-stretch: 1;
+                                                    background: #00000000;
+
+                                                    if (root.detail-items.length == 0) : EmptyState {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        title: "No model detail loaded";
+                                                        body: "Select a model in Models, then inspect it to see metadata and runtime preparation information.";
+                                                        title-color: root.text-primary;
+                                                        body-color: root.text-secondary;
+                                                    }
+
+                                                    if (root.detail-items.length > 0) : ListView {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        for item[index] in root.detail-items : StreamRow {
+                                                            value: item;
+                                                            alternate: Math.mod(index, 2) == 1;
+                                                            fill: root.row-fill;
+                                                            alternate-fill: root.row-alt-fill;
+                                                            edge: root.shell-edge;
+                                                            text-color: root.text-primary;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        PanelCard {
+                                            fill: root.panel-fill;
+                                            edge: root.shell-edge;
+                                            width: 360px;
+                                            vertical-stretch: 1;
+
+                                            VerticalLayout {
+                                                padding: 16px;
+                                                spacing: 12px;
+
+                                                HorizontalLayout {
+                                                    SectionTitle { text: "Runtime Diagnostics"; }
+                                                    Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                                    Button { text: "Refresh"; clicked => { root.refresh-runtime(); } }
+                                                }
+
+                                                Rectangle {
+                                                    vertical-stretch: 1;
+                                                    background: #00000000;
+
+                                                    if (root.runtime-items.length == 0) : EmptyState {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        title: "No runtime diagnostics";
+                                                        body: "Refresh to inspect the worker, bundled runtime, and current macOS desktop setup.";
+                                                        title-color: root.text-primary;
+                                                        body-color: root.text-secondary;
+                                                    }
+
+                                                    if (root.runtime-items.length > 0) : ListView {
+                                                        width: parent.width;
+                                                        height: parent.height;
+                                                        for item[index] in root.runtime-items : StreamRow {
+                                                            value: item;
+                                                            alternate: Math.mod(index, 2) == 1;
+                                                            fill: root.row-fill;
+                                                            alternate-fill: root.row-alt-fill;
+                                                            edge: root.shell-edge;
+                                                            text-color: root.text-primary;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (root.selected-view == 5) : PanelCard {
+                                        fill: root.panel-fill;
+                                        edge: root.shell-edge;
+                                        radius: 22px;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        VerticalLayout {
+                                            padding: 20px;
+                                            spacing: 18px;
+
+                                            SectionTitle { text: "Account"; }
+                                            BodyText { text: "Save an optional Hugging Face token for gated or private GGUF repositories."; }
+                                            LineEdit { text <=> root.hf-token; placeholder-text: "Hugging Face token"; }
+                                            Button { text: "Save Token"; clicked => { root.save-token(root.hf-token); } }
+
+                                            Rectangle { height: 1px; background: root.shell-edge; }
+
+                                            SectionTitle { text: "Appearance"; }
+                                            HorizontalLayout {
+                                                spacing: 10px;
+
+                                                PillButton {
+                                                    label: "Smoke Glass";
+                                                    selected: root.theme-mode == 0;
+                                                    selected-fill: root.chip-active;
+                                                    idle-fill: root.chip-fill;
+                                                    selected-text: root.text-primary;
+                                                    idle-text: root.text-secondary;
+                                                    preferred-width: 160px;
+                                                    invoke => { root.theme-mode = 0; }
+                                                }
+
+                                                PillButton {
+                                                    label: "Blackout";
+                                                    selected: root.theme-mode == 1;
+                                                    selected-fill: root.chip-active;
+                                                    idle-fill: root.chip-fill;
+                                                    selected-text: root.text-primary;
+                                                    idle-text: root.text-secondary;
+                                                    preferred-width: 140px;
+                                                    invoke => { root.theme-mode = 1; }
+                                                }
+                                            }
+
+                                            Rectangle { height: 1px; background: root.shell-edge; }
+
+                                            SectionTitle { text: "Runtime"; }
+                                            BodyText { text: "Use Runtime to inspect worker health, prepared caches, and current backend readiness."; }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    PanelCard {
-                        fill: root.shell-inner;
-                        edge: root.shell-edge;
-                        radius: 24px;
-                        height: 124px;
+                        if (root.chat-mode) : PanelCard {
+                            fill: root.shell-inner;
+                            edge: root.shell-edge;
+                            radius: 24px;
+                            height: 86px;
 
-                        VerticalLayout {
-                            width: parent.width;
-                            height: parent.height;
-                            padding: 14px;
-                            spacing: 10px;
+                            VerticalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                padding: 14px;
+                                spacing: 0px;
 
-                            HorizontalLayout {
-                                spacing: 8px;
+                                PanelCard {
+                                    fill: root.composer-fill;
+                                    edge: root.shell-edge;
+                                    radius: 20px;
+                                    vertical-stretch: 1;
 
-                                PillButton {
-                                    label: root.work-mode ? "Configure" : "Chat";
-                                    selected: true;
-                                    selected-fill: root.chip-active;
-                                    idle-fill: root.chip-fill;
-                                    selected-text: root.text-primary;
-                                    idle-text: root.text-secondary;
-                                    preferred-width: 86px;
-                                    invoke => { }
-                                }
+                                    HorizontalLayout {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        padding: 12px;
+                                        spacing: 12px;
 
-                                LineEdit {
-                                    text <=> root.chat-model-id;
-                                    placeholder-text: "Model ID";
-                                    preferred-width: 220px;
-                                }
+                                        Button {
+                                            text: "Models";
+                                            clicked => { root.selected-view = 1; }
+                                        }
 
-                                Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                        LineEdit {
+                                            text <=> root.chat-prompt;
+                                            placeholder-text: root.model-id-input == "" ? "Select a model in Models, then send a message" : "Message TritPack";
+                                            horizontal-stretch: 1;
+                                            accepted => { root.send-prompt(root.model-id-input, root.chat-prompt); }
+                                        }
 
-                                BodyText { text: root.status-text; }
-                            }
-
-                            PanelCard {
-                                fill: root.composer-fill;
-                                edge: root.shell-edge;
-                                radius: 20px;
-                                vertical-stretch: 1;
-
-                                HorizontalLayout {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    padding: 12px;
-                                    spacing: 12px;
-
-                                    IconCircle {
-                                        label: "＋";
-                                        fill: root.chip-fill;
-                                        text-color: root.text-secondary;
-                                        invoke => { }
-                                    }
-
-                                    TextEdit {
-                                        text <=> root.chat-prompt;
-                                        wrap: word-wrap;
-                                        horizontal-stretch: 1;
-                                    }
-
-                                    Button {
-                                        text: "Send";
-                                        clicked => { root.send-prompt(root.chat-model-id, root.chat-prompt); }
+                                        Button {
+                                            text: "Send";
+                                            clicked => { root.send-prompt(root.model-id-input, root.chat-prompt); }
+                                        }
                                     }
                                 }
                             }

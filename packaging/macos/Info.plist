@@ -12,6 +12,10 @@
     <string>io.tritpack.desktop</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>TritPack.icns</string>
+    <key>CFBundleIconName</key>
+    <string>TritPack</string>
     <key>CFBundleName</key>
     <string>TritPack</string>
     <key>CFBundlePackageType</key>

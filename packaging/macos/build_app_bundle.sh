@@ -11,6 +11,7 @@ MACOS_DIR="$APP_DIR/Contents/MacOS"
 "$ROOT/packaging/macos/vendor_llamacpp.sh"
 "$ROOT/packaging/macos/bootstrap_python_runtime.sh"
 "$ROOT/packaging/macos/build_python_wheelhouse.sh"
+"$ROOT/packaging/macos/build_app_icon.sh"
 
 cargo build --release -p tritpack-desktop --manifest-path "$ROOT/Cargo.toml"
 
@@ -25,5 +26,7 @@ cp -R "$ROOT/resources/llama.cpp/." "$RESOURCES_DIR/llama.cpp/"
 cp -R "$ROOT/resources/python/." "$RESOURCES_DIR/python/"
 cp -R "$ROOT/python/tritpack" "$RESOURCES_DIR/python/"
 cp -R "$ROOT/integration/." "$RESOURCES_DIR/integration/"
+mkdir -p "$RESOURCES_DIR/app-icon"
+cp "$ROOT/resources/app-icon/TritPack.icns" "$RESOURCES_DIR/TritPack.icns"
 
 echo "Built app bundle at $APP_DIR"
