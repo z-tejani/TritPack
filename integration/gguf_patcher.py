@@ -70,7 +70,13 @@ class GGUFPatcher:
         self._quantizer = TernaryQuantizer(block_size=block_size, alpha=alpha)
         self._dequantizer = TernaryDequantizer()
 
-    def patch(self, input_path: str, output_path: str, alpha: float | None = None) -> QualityPatchReport:
+    def patch(
+        self,
+        input_path: str,
+        output_path: str,
+        alpha: float | None = None,
+        progress_callback=None,
+    ) -> QualityPatchReport:
         """
         Quantize all tensors in *input_path* and save to *output_path*.
 
@@ -111,7 +117,10 @@ class GGUFPatcher:
         t0 = time.perf_counter()
         gb = 1 << 30
 
-        for name, tensor in backend.iter_tensors():
+        tensor_names = backend.tensor_names()
+        total_tensors = max(1, len(tensor_names))
+
+        for index, (name, tensor) in enumerate(backend.iter_tensors()):
             qt = q.quantize(tensor)
             safe_name = name.replace("/", "__").replace(".", "_")
             np_save(qt, output_dir / f"{safe_name}.npz")
@@ -119,6 +128,8 @@ class GGUFPatcher:
             report.original_gb += tensor.nbytes / gb
             report.compressed_gb += qt.size_bytes() / gb
             report.layers.append({"name": name, "shape": list(tensor.shape)})
+            if progress_callback is not None:
+                progress_callback(index + 1, total_tensors, name)
 
         report.patch_time_s = time.perf_counter() - t0
 

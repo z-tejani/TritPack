@@ -75,8 +75,22 @@ def handle_convert(request_id: str, payload: dict) -> dict:
         block_size=int(payload.get("block_size", 64)),
     )
     progress(request_id, 0.2, "convert", "Compressing tensors into TritPack format")
-    report = patcher.patch(payload["source_path"], str(output_dir))
-    progress(request_id, 0.9, "finalize", "Writing metadata and summarizing conversion")
+
+    def on_tensor(index: int, total: int, name: str) -> None:
+        fraction = index / max(1, total)
+        progress(
+            request_id,
+            0.2 + (fraction * 0.68),
+            "convert",
+            f"Compressing tensor {index}/{total}: {name}",
+        )
+
+    report = patcher.patch(
+        payload["source_path"],
+        str(output_dir),
+        progress_callback=on_tensor,
+    )
+    progress(request_id, 0.92, "finalize", "Writing metadata and summarizing conversion")
     summary = report.summary()
     return {
         "output_dir": str(output_dir),

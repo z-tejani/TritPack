@@ -10,7 +10,8 @@ use i_slint_backend_winit::WinitWindowAccessor;
 use slint::{ModelRc, PhysicalPosition, SharedString, Timer, TimerMode, VecModel};
 use tritpack_app_core::{DesktopApp, HuggingFaceFile};
 use tritpack_runtime_api::{
-    ChatSession, ConversionProfile, InferenceEvent, ModelRecord, RuntimeProfile,
+    ChatSession, ConversionProfile, InferenceEvent, JobRecord, JobState, ModelRecord,
+    RuntimeProfile,
 };
 
 slint::include_modules!();
@@ -18,7 +19,7 @@ slint::include_modules!();
 pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     let window = AppWindow::new()?;
     let library_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
-    let job_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
+    let job_items = std::rc::Rc::new(VecModel::<JobListItem>::from(vec![]));
     let search_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let detail_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
     let runtime_items = std::rc::Rc::new(VecModel::<SharedString>::from(vec![]));
@@ -260,7 +261,15 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
         if let Some(window) = weak.upgrade() {
             match result {
                 Ok(model) => {
-                    window.set_status_text(format!("Imported {}", model.display_name).into())
+                    window.set_model_id_input(model.id.clone().into());
+                    window.set_chat_model_id(model.id.clone().into());
+                    window.set_status_text(
+                        format!(
+                            "Imported {}. Next: Convert, then Prepare.",
+                            model.display_name
+                        )
+                        .into(),
+                    )
                 }
                 Err(error) => window.set_status_text(format!("Import failed: {error}").into()),
             }
@@ -272,6 +281,52 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
                 &saved_chats_for_import,
                 &model_state_for_import,
                 &sessions_for_import,
+            );
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_browse_import_path(move || {
+        if let Some(window) = weak.upgrade() {
+            match choose_gguf_file() {
+                Ok(Some(path)) => window.set_import_path(path.into()),
+                Ok(None) => {}
+                Err(error) => {
+                    window.set_status_text(format!("Could not open file picker: {error}").into())
+                }
+            }
+        }
+    });
+
+    let weak = window.as_weak();
+    let app_for_delete = Arc::clone(&app);
+    let library_for_delete = library_items.clone();
+    let jobs_for_delete = job_items.clone();
+    let saved_chats_for_delete = saved_chat_items.clone();
+    let model_state_for_delete = Arc::clone(&model_state);
+    let sessions_for_delete = Arc::clone(&saved_sessions_state);
+    window.on_delete_model(move |model_id| {
+        if model_id.trim().is_empty() {
+            return;
+        }
+        if let Some(window) = weak.upgrade() {
+            match app_for_delete.delete_model(model_id.trim()) {
+                Ok(_) => {
+                    window.set_model_id_input("".into());
+                    window.set_chat_model_id("".into());
+                    window.set_selected_library_index(-1);
+                    window.set_status_text("Deleted model".into());
+                }
+                Err(error) => window.set_status_text(format!("Delete failed: {error}").into()),
+            }
+            let _ = refresh_models(
+                &app_for_delete,
+                &window,
+                &library_for_delete,
+                &jobs_for_delete,
+                &saved_chats_for_delete,
+                &model_state_for_delete,
+                &sessions_for_delete,
             );
         }
     });
@@ -594,6 +649,24 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
             return;
         }
 
+        match app_for_chat.next_chat_step(model_id.trim()) {
+            Ok(Some(next_step)) => {
+                if let Some(window) = weak.upgrade() {
+                    window.set_selected_view(1);
+                    window.set_status_text(next_step.into());
+                }
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if let Some(window) = weak.upgrade() {
+                    window.set_selected_view(1);
+                    window.set_status_text(format!("Model check failed: {error}").into());
+                }
+                return;
+            }
+        }
+
         {
             let mut state = chat_state_for_chat.lock().expect("chat state poisoned");
             state.push(format!("User: {}", prompt.trim()).into());
@@ -734,12 +807,13 @@ fn refresh_models(
     app: &DesktopApp,
     window: &AppWindow,
     library_items: &VecModel<SharedString>,
-    job_items: &VecModel<SharedString>,
+    job_items: &VecModel<JobListItem>,
     saved_chat_items: &VecModel<SharedString>,
     model_state: &Arc<Mutex<Vec<ModelRecord>>>,
     saved_sessions_state: &Arc<Mutex<Vec<ChatSession>>>,
 ) -> Result<()> {
     *model_state.lock().expect("model state poisoned") = app.list_models()?;
+    let jobs = app.list_jobs()?;
     let sessions = app.list_chat_sessions()?;
     *saved_sessions_state.lock().expect("session state poisoned") = sessions.clone();
     library_items.set_vec(
@@ -748,13 +822,9 @@ fn refresh_models(
             .map(Into::into)
             .collect::<Vec<SharedString>>(),
     );
-    job_items.set_vec(
-        app.list_job_summaries()?
-            .into_iter()
-            .map(Into::into)
-            .collect::<Vec<SharedString>>(),
-    );
+    fill_job_items(job_items, &jobs);
     fill_saved_chats(saved_chat_items, &sessions);
+    sync_active_job(window, &jobs);
     window.set_status_text(app.runtime_health()?.into());
     Ok(())
 }
@@ -792,6 +862,46 @@ fn fill_results(model: &VecModel<SharedString>, results: &[HuggingFaceFile]) {
             })
             .collect::<Vec<SharedString>>(),
     );
+}
+
+fn fill_job_items(model: &VecModel<JobListItem>, jobs: &[JobRecord]) {
+    model.set_vec(
+        jobs.iter()
+            .map(|job| JobListItem {
+                id: job.id.clone().into(),
+                title: format!("{:?} · {}", job.kind, short_id(&job.id)).into(),
+                stage: job.stage.clone().into(),
+                progress: (job.progress.clamp(0.0, 1.0) * 100.0).round() as i32,
+                progress_label: format!("{:?}", job.state).into(),
+                cancelable: job.cancelable
+                    && matches!(job.state, JobState::Queued | JobState::Running),
+            })
+            .collect::<Vec<JobListItem>>(),
+    );
+}
+
+fn sync_active_job(window: &AppWindow, jobs: &[JobRecord]) {
+    let selected_model = window.get_model_id_input().to_string();
+    if selected_model.trim().is_empty() {
+        window.set_active_job_visible(false);
+        return;
+    }
+
+    let active = jobs
+        .iter()
+        .find(|job| job.model_id.as_deref() == Some(selected_model.as_str()))
+        .filter(|job| matches!(job.state, JobState::Queued | JobState::Running));
+
+    if let Some(job) = active {
+        window.set_active_job_visible(true);
+        window.set_active_job_title(format!("{:?} · {}", job.kind, short_id(&job.id)).into());
+        window.set_active_job_stage(job.stage.clone().into());
+        window.set_active_job_progress((job.progress.clamp(0.0, 1.0) * 100.0).round() as i32);
+        window.set_active_job_id(job.id.clone().into());
+        window.set_active_job_cancelable(job.cancelable);
+    } else {
+        window.set_active_job_visible(false);
+    }
 }
 
 fn fill_saved_chats(model: &VecModel<SharedString>, sessions: &[ChatSession]) {
@@ -844,6 +954,10 @@ fn greeting_for_local_time() -> &'static str {
     }
 }
 
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 fn repo_root() -> PathBuf {
     let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     fallback.canonicalize().unwrap_or(fallback)
@@ -852,4 +966,22 @@ fn repo_root() -> PathBuf {
 fn open_path(path: &std::path::Path) -> Result<()> {
     Command::new("open").arg(path).status()?;
     Ok(())
+}
+
+fn choose_gguf_file() -> Result<Option<String>> {
+    let script = r#"set pickedFile to choose file with prompt "Choose a GGUF model" of type {"gguf"}
+POSIX path of pickedFile"#;
+    let output = Command::new("osascript").arg("-e").arg(script).output()?;
+    if output.status.success() {
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("User canceled") || stderr.contains("-128") {
+            Ok(None)
+        } else {
+            Err(anyhow::anyhow!(stderr.trim().to_string()))
+        }
+    }
 }

@@ -1,5 +1,14 @@
 import { ListView, Button, LineEdit } from "std-widgets.slint";
 
+export struct JobListItem {
+    id: string,
+    title: string,
+    stage: string,
+    progress: int,
+    progress_label: string,
+    cancelable: bool,
+}
+
 component PillButton inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
@@ -33,10 +42,8 @@ component PillButton inherits Rectangle {
     }
 }
 
-component IconCircle inherits Rectangle {
-    in property <string> label;
+component HamburgerCircle inherits Rectangle {
     in property <brush> fill;
-    in property <color> text-color;
     callback invoke();
 
     width: 38px;
@@ -46,17 +53,63 @@ component IconCircle inherits Rectangle {
     border-width: 1px;
     border-color: #ffffff10;
 
-    Text {
-        width: parent.width;
-        height: parent.height;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        text: label;
-        color: text-color;
-        font-size: 15px;
-        font-weight: 700;
-        font-family: "SF Pro Display";
+    for y in [12px, 18px, 24px] : Rectangle {
+        x: 11px;
+        y: y;
+        width: 16px;
+        height: 2px;
+        border-radius: 1px;
+        background: #ffffff;
     }
+
+    touch := TouchArea {
+        clicked => { root.invoke(); }
+    }
+}
+
+component ThemeCircle inherits Rectangle {
+    in property <brush> fill;
+    in property <bool> dark-mode;
+    callback invoke();
+
+    width: 38px;
+    height: 38px;
+    border-radius: 19px;
+    background: fill;
+    border-width: 1px;
+    border-color: #ffffff10;
+
+    if (root.dark-mode) : Rectangle {
+        x: 12px;
+        y: 12px;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: #ffffff;
+    }
+
+    if (root.dark-mode) : Rectangle {
+        x: 17px;
+        y: 10px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: root.fill;
+    }
+
+    if (!root.dark-mode) : Rectangle {
+        x: 13px;
+        y: 13px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: #ffffff;
+    }
+
+    if (!root.dark-mode) : Rectangle { x: 18px; y: 7px; width: 2px; height: 4px; border-radius: 1px; background: #ffffff; }
+    if (!root.dark-mode) : Rectangle { x: 18px; y: 27px; width: 2px; height: 4px; border-radius: 1px; background: #ffffff; }
+    if (!root.dark-mode) : Rectangle { x: 7px; y: 18px; width: 4px; height: 2px; border-radius: 1px; background: #ffffff; }
+    if (!root.dark-mode) : Rectangle { x: 27px; y: 18px; width: 4px; height: 2px; border-radius: 1px; background: #ffffff; }
 
     touch := TouchArea {
         clicked => { root.invoke(); }
@@ -210,6 +263,71 @@ component StreamRow inherits Rectangle {
     }
 }
 
+component JobRow inherits Rectangle {
+    in property <JobListItem> item;
+    in property <brush> fill;
+    in property <color> edge;
+    in property <color> title-color;
+    in property <color> body-color;
+    callback cancel(string);
+
+    height: 108px;
+    border-radius: 16px;
+    background: fill;
+    border-width: 1px;
+    border-color: edge;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: root.item.title;
+                color: root.title-color;
+                font-size: 13px;
+                font-weight: 700;
+                font-family: "SF Pro Display";
+            }
+            Rectangle { horizontal-stretch: 1; background: #00000000; }
+            Text {
+                text: root.item.progress_label;
+                color: root.body-color;
+                font-size: 12px;
+                font-family: "SF Pro Display";
+            }
+            if (root.item.cancelable) : Button {
+                text: "Cancel";
+                clicked => { root.cancel(root.item.id); }
+            }
+        }
+
+        Text {
+            text: root.item.stage;
+            color: root.body-color;
+            font-size: 12px;
+            wrap: word-wrap;
+            font-family: "SF Pro Display";
+        }
+
+        Rectangle {
+            height: 8px;
+            border-radius: 4px;
+            background: #ffffff10;
+
+            Rectangle {
+                width: parent.width * (root.item.progress / 100);
+                height: parent.height;
+                border-radius: 4px;
+                background: #ffffff;
+            }
+        }
+    }
+}
+
 component EmptyState inherits Rectangle {
     in property <string> title;
     in property <string> body;
@@ -298,7 +416,7 @@ export component AppWindow inherits Window {
     forward-focus: shortcut-scope;
 
     in property <[string]> library-items;
-    in property <[string]> job-items;
+    in property <[JobListItem]> job-items;
     in property <[string]> search-items;
     in property <[string]> detail-items;
     in property <[string]> runtime-items;
@@ -321,6 +439,12 @@ export component AppWindow inherits Window {
     in-out property <int> selected-search-index: -1;
     in-out property <int> selected-saved-chat-index: -1;
     in-out property <bool> chat-drawer-open: false;
+    in-out property <bool> active-job-visible: false;
+    in-out property <string> active-job-title: "";
+    in-out property <string> active-job-stage: "";
+    in-out property <int> active-job-progress: 0;
+    in-out property <string> active-job-id: "";
+    in-out property <bool> active-job-cancelable: false;
 
     callback refresh();
     callback import-local(string);
@@ -347,6 +471,8 @@ export component AppWindow inherits Window {
     callback select-search-item(int);
     callback select-saved-chat-item(int);
     callback set-theme-mode(int);
+    callback browse-import-path();
+    callback delete-model(string);
 
     MenuBar {
         Menu {
@@ -590,10 +716,8 @@ export component AppWindow inherits Window {
                                         invoke => { root.toggle-maximize-window(); }
                                     }
 
-                                    IconCircle {
-                                        label: "≡";
+                                    if (root.chat-mode) : HamburgerCircle {
                                         fill: root.chip-fill;
-                                        text-color: #ffffff;
                                         invoke => { root.chat-drawer-open = !root.chat-drawer-open; }
                                     }
                                 }
@@ -651,10 +775,9 @@ export component AppWindow inherits Window {
 
                                 Rectangle { horizontal-stretch: 1; background: #00000000; }
 
-                                IconCircle {
-                                    label: root.theme-mode == 0 ? "☾" : "☀";
+                                ThemeCircle {
                                     fill: root.chip-fill;
-                                    text-color: #ffffff;
+                                    dark-mode: root.theme-mode == 0;
                                     invoke => { root.set-theme-mode(root.theme-mode == 0 ? 1 : 0); }
                                 }
                             }
@@ -685,7 +808,6 @@ export component AppWindow inherits Window {
                                         HorizontalLayout {
                                             SectionTitle { text: "Saved Chats"; }
                                             Rectangle { horizontal-stretch: 1; background: #00000000; }
-                                            Button { text: "Close"; clicked => { root.chat-drawer-open = false; } }
                                         }
 
                                         Rectangle {
@@ -1004,7 +1126,7 @@ export component AppWindow inherits Window {
                                                 fill: root.panel-strong;
                                                 edge: root.shell-edge;
                                                 radius: 22px;
-                                                height: 126px;
+                                                height: 128px;
 
                                                 VerticalLayout {
                                                     padding: 16px;
@@ -1014,6 +1136,7 @@ export component AppWindow inherits Window {
                                                     HorizontalLayout {
                                                         spacing: 10px;
                                                         LineEdit { text <=> root.import-path; placeholder-text: "/path/to/model.gguf"; horizontal-stretch: 1; }
+                                                        Button { text: "Browse"; clicked => { root.browse-import-path(); } }
                                                         Button { text: "Import"; clicked => { root.import-local(root.import-path); } }
                                                     }
                                                 }
@@ -1042,17 +1165,81 @@ export component AppWindow inherits Window {
                                                         font-family: "SF Pro Display";
                                                     }
 
-                                                    HorizontalLayout {
-                                                        spacing: 10px;
-                                                        Button { text: "Open in Chat"; clicked => { root.selected-view = 0; } }
-                                                        Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); root.selected-view = 4; } }
-                                                        Button { text: "Convert"; clicked => { root.queue-convert(root.model-id-input); } }
+                                                    BodyText {
+                                                        text: root.model-id-input == "" ? "Select a model to manage it." : "To chat with a new model, Convert it first, then Prepare it.";
+                                                    }
+
+                                                    if (root.active-job-visible) : PanelCard {
+                                                        fill: root.panel-soft;
+                                                        edge: root.shell-edge;
+                                                        radius: 18px;
+                                                        height: 112px;
+
+                                                        VerticalLayout {
+                                                            padding: 12px;
+                                                            spacing: 8px;
+
+                                                            HorizontalLayout {
+                                                                Text {
+                                                                    text: root.active-job-title;
+                                                                    color: root.text-primary;
+                                                                    font-size: 13px;
+                                                                    font-weight: 700;
+                                                                    font-family: "SF Pro Display";
+                                                                }
+                                                                Rectangle { horizontal-stretch: 1; background: #00000000; }
+                                                                Text {
+                                                                    text: root.active-job-progress + "%";
+                                                                    color: root.text-secondary;
+                                                                    font-size: 12px;
+                                                                    font-family: "SF Pro Display";
+                                                                }
+                                                            }
+
+                                                            Text {
+                                                                text: root.active-job-stage;
+                                                                color: root.text-secondary;
+                                                                font-size: 12px;
+                                                                wrap: word-wrap;
+                                                                font-family: "SF Pro Display";
+                                                            }
+
+                                                            Rectangle {
+                                                                height: 8px;
+                                                                border-radius: 4px;
+                                                                background: #ffffff10;
+
+                                                                Rectangle {
+                                                                    width: parent.width * (root.active-job-progress / 100);
+                                                                    height: parent.height;
+                                                                    border-radius: 4px;
+                                                                    background: #ffffff;
+                                                                }
+                                                            }
+
+                                                            HorizontalLayout {
+                                                                spacing: 10px;
+                                                                Button { text: "See in Queue"; clicked => { root.selected-view = 3; } }
+                                                                if (root.active-job-cancelable) : Button {
+                                                                    text: "Cancel";
+                                                                    clicked => { root.cancel-job(root.active-job-id); }
+                                                                }
+                                                            }
+                                                        }
                                                     }
 
                                                     HorizontalLayout {
                                                         spacing: 10px;
+                                                        Button { text: "Convert"; clicked => { root.queue-convert(root.model-id-input); } }
                                                         Button { text: "Prepare"; clicked => { root.prepare-runtime(root.model-id-input); } }
+                                                        Button { text: "Open in Chat"; clicked => { root.selected-view = 0; } }
+                                                    }
+
+                                                    HorizontalLayout {
+                                                        spacing: 10px;
+                                                        Button { text: "Inspect"; clicked => { root.inspect-model(root.model-id-input); root.selected-view = 4; } }
                                                         Button { text: "Clear Cache"; clicked => { root.clear-cache(root.model-id-input); } }
+                                                        Button { text: "Delete"; clicked => { root.delete-model(root.model-id-input); } }
                                                     }
                                                 }
                                             }
@@ -1166,24 +1353,6 @@ export component AppWindow inherits Window {
                                         vertical-stretch: 1;
 
                                         PanelCard {
-                                            fill: root.panel-strong;
-                                            edge: root.shell-edge;
-                                            radius: 22px;
-                                            height: 72px;
-
-                                            HorizontalLayout {
-                                                width: parent.width;
-                                                height: parent.height;
-                                                padding: 14px;
-                                                spacing: 10px;
-
-                                                LineEdit { text <=> root.job-id-input; placeholder-text: "Job ID"; horizontal-stretch: 1; }
-                                                Button { text: "Cancel"; clicked => { root.cancel-job(root.job-id-input); } }
-                                                Button { text: "Refresh"; clicked => { root.refresh(); } }
-                                            }
-                                        }
-
-                                        PanelCard {
                                             fill: root.panel-fill;
                                             edge: root.shell-edge;
                                             vertical-stretch: 1;
@@ -1200,13 +1369,13 @@ export component AppWindow inherits Window {
                                             if (root.job-items.length > 0) : ListView {
                                                 width: parent.width;
                                                 height: parent.height;
-                                                for item[index] in root.job-items : StreamRow {
-                                                    value: item;
-                                                    alternate: Math.mod(index, 2) == 1;
-                                                    fill: root.row-fill;
-                                                    alternate-fill: root.row-alt-fill;
+                                                for item[index] in root.job-items : JobRow {
+                                                    item: item;
+                                                    fill: Math.mod(index, 2) == 1 ? root.row-alt-fill : root.row-fill;
                                                     edge: root.shell-edge;
-                                                    text-color: root.text-primary;
+                                                    title-color: root.text-primary;
+                                                    body-color: root.text-secondary;
+                                                    cancel(job_id) => { root.cancel-job(job_id); }
                                                 }
                                             }
                                         }

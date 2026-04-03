@@ -341,6 +341,14 @@ impl SqliteModelStore {
         Ok(jobs)
     }
 
+    pub fn delete_model(&self, model_id: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM artifacts WHERE model_id = ?1", [model_id])?;
+        conn.execute("DELETE FROM sessions WHERE model_id = ?1", [model_id])?;
+        conn.execute("DELETE FROM models WHERE id = ?1", [model_id])?;
+        Ok(())
+    }
+
     pub fn save_session(&self, session: &ChatSession) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
@@ -784,7 +792,24 @@ impl DesktopApp {
             fs::copy(source_path, &managed_path)
                 .with_context(|| format!("failed to import {}", source_path.display()))?;
         }
-        self.store.import_local(source_path, &managed_path, &hash)
+        let model = self.store.import_local(source_path, &managed_path, &hash)?;
+        let _ = self.inspect_model(&model.id);
+        Ok(model)
+    }
+
+    pub fn delete_model(&self, model_id: &str) -> Result<()> {
+        let artifacts = self.store.list_artifacts(model_id)?;
+        for artifact in artifacts {
+            if artifact.path.exists() {
+                if artifact.path.is_dir() {
+                    let _ = fs::remove_dir_all(&artifact.path);
+                } else {
+                    let _ = fs::remove_file(&artifact.path);
+                }
+            }
+        }
+        self.store.delete_model(model_id)?;
+        Ok(())
     }
 
     pub fn inspect_model(&self, model_id: &str) -> Result<GgufInspection> {
@@ -1277,6 +1302,40 @@ impl DesktopApp {
         });
 
         Ok(job_id)
+    }
+
+    pub fn next_chat_step(&self, model_id: &str) -> Result<Option<String>> {
+        let model = self
+            .store
+            .list_models()?
+            .into_iter()
+            .find(|record| record.id == model_id)
+            .ok_or_else(|| anyhow!("model {model_id} not found"))?;
+
+        if self
+            .store
+            .resolve_artifact(model_id, ArtifactKind::TritpackDir)?
+            .is_none()
+        {
+            return Ok(Some(match model.status {
+                ModelStatus::Imported | ModelStatus::Inspecting | ModelStatus::ReadyToConvert => {
+                    "Click Convert first, then Prepare, before chatting.".to_string()
+                }
+                _ => "This model still needs TritPack conversion before chatting.".to_string(),
+            }));
+        }
+
+        if self
+            .store
+            .resolve_artifact(model_id, ArtifactKind::ReconstructedCache)?
+            .is_none()
+        {
+            return Ok(Some(
+                "Click Prepare to build the runtime cache before chatting.".to_string(),
+            ));
+        }
+
+        Ok(None)
     }
 
     pub fn remove_reconstructed_cache(&self, model_id: &str) -> Result<()> {
@@ -1889,7 +1948,224 @@ fn map_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobRecord> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
     use tempfile::tempdir;
+    use tritpack_runtime_api::{
+        BackendCapabilities, BackendHealth, ConversionEstimate, ConversionStream, ConvertRequest,
+        GenerationStream, ModelHandle, VerifyReport,
+    };
+
+    struct FakeConversionBackend;
+
+    impl ConversionBackend for FakeConversionBackend {
+        fn inspect_gguf(&self, path: &Path) -> Result<GgufInspection> {
+            Ok(GgufInspection {
+                path: path.to_path_buf(),
+                size_bytes: fs::metadata(path)?.len(),
+                version: 3,
+                tensor_count: 2,
+                metadata_count: 3,
+                metadata: BTreeMap::from([
+                    ("general.architecture".to_string(), "llama".to_string()),
+                    ("general.size_label".to_string(), "8B".to_string()),
+                    ("general.license".to_string(), "apache-2.0".to_string()),
+                ]),
+                tensor_names: vec!["blk.0.attn_q.weight".to_string()],
+            })
+        }
+
+        fn estimate_conversion(
+            &self,
+            inspection: &GgufInspection,
+            _profile: &ConversionProfile,
+        ) -> Result<ConversionEstimate> {
+            Ok(ConversionEstimate {
+                estimated_bytes: inspection.size_bytes / 2,
+                compression_ratio: 2.0,
+            })
+        }
+
+        fn convert_to_tritpack(&self, request: ConvertRequest) -> Result<ConversionStream> {
+            let (tx, rx) = channel();
+            thread::spawn(move || {
+                let _ = fs::create_dir_all(&request.output_dir);
+                let _ = tx.send(ConversionEvent::Progress {
+                    job_id: request.job_id.clone(),
+                    progress: 0.35,
+                    stage: "convert".to_string(),
+                    message: "Compressing tensors".to_string(),
+                });
+                let _ = fs::write(request.output_dir.join("metadata.json"), b"{}");
+                let _ = fs::write(request.output_dir.join("tensor_0.npz"), b"packed");
+                let _ = tx.send(ConversionEvent::Complete {
+                    job_id: request.job_id,
+                    output_dir: request.output_dir,
+                    report_summary: "ratio=2.0x".to_string(),
+                });
+            });
+            Ok(ConversionStream { receiver: rx })
+        }
+
+        fn reconstruct_gguf_stream(
+            &self,
+            job_id: String,
+            _tritpack_dir: PathBuf,
+            output_path: PathBuf,
+        ) -> Result<ConversionStream> {
+            let (tx, rx) = channel();
+            thread::spawn(move || {
+                if let Some(parent) = output_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = tx.send(ConversionEvent::Progress {
+                    job_id: job_id.clone(),
+                    progress: 0.5,
+                    stage: "reconstruct".to_string(),
+                    message: "Building GGUF cache".to_string(),
+                });
+                let _ = fs::write(&output_path, b"GGUF");
+                let _ = tx.send(ConversionEvent::Complete {
+                    job_id,
+                    output_dir: output_path,
+                    report_summary: "reconstructed".to_string(),
+                });
+            });
+            Ok(ConversionStream { receiver: rx })
+        }
+
+        fn verify_conversion(&self, _request: VerifyRequest) -> Result<VerifyReport> {
+            Ok(VerifyReport {
+                ok: true,
+                tensors_verified: 8,
+                metadata_complete: true,
+                mean_cosine_similarity: Some(0.99),
+                mean_snr_db: Some(42.0),
+                notes: vec![],
+            })
+        }
+
+        fn cancel_job(&self, _job_id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FakeInferenceBackend;
+
+    impl InferenceBackend for FakeInferenceBackend {
+        fn name(&self) -> &'static str {
+            "fake-runtime"
+        }
+
+        fn capabilities(&self) -> BackendCapabilities {
+            BackendCapabilities {
+                supports_streaming: true,
+                supports_interrupt: true,
+                supports_embeddings: false,
+            }
+        }
+
+        fn health_check(&self) -> Result<BackendHealth> {
+            Ok(BackendHealth {
+                ok: true,
+                message: "runtime ready".to_string(),
+            })
+        }
+
+        fn prepare_model(&self, request: LoadModelRequest) -> Result<ModelHandle> {
+            fs::create_dir_all(&request.cache_dir)?;
+            let prepared_path = request
+                .cache_dir
+                .join(format!("{}-{}.gguf", request.model_id, &request.original_hash[..12]));
+            fs::write(&prepared_path, b"GGUF")?;
+            Ok(ModelHandle {
+                id: Uuid::new_v4().to_string(),
+                model_id: request.model_id,
+                backend_name: "fake-runtime".to_string(),
+                prepared_path,
+            })
+        }
+
+        fn load_model(&self, request: LoadModelRequest) -> Result<ModelHandle> {
+            self.prepare_model(request)
+        }
+
+        fn unload_model(&self, _handle: &ModelHandle) -> Result<()> {
+            Ok(())
+        }
+
+        fn generate_stream(&self, _request: GenerateRequest) -> Result<GenerationStream> {
+            let (tx, rx) = channel();
+            thread::spawn(move || {
+                let _ = tx.send(InferenceEvent::Started {
+                    generation_id: "gen".to_string(),
+                });
+                let _ = tx.send(InferenceEvent::Token("hello".to_string()));
+                let _ = tx.send(InferenceEvent::Completed {
+                    output: "hello".to_string(),
+                });
+            });
+            Ok(GenerationStream { receiver: rx })
+        }
+
+        fn interrupt(&self, _generation_id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn test_resources(root: &Path) -> ResourcePaths {
+        ResourcePaths {
+            root: root.join("resources"),
+            llama_manifest: root.join("resources/llama.cpp/manifest.toml"),
+            llama_dir: root.join("resources/llama.cpp"),
+            python_dir: root.join("resources/python"),
+            python_requirements: root.join("resources/python/requirements.lock"),
+            python_runtime_manifest: root.join("resources/python/runtime-manifest.toml"),
+            python_worker_script: root.join("resources/python/worker/desktop_worker.py"),
+            python_wheelhouse: root.join("resources/python/wheelhouse"),
+            info_plist_template: root.join("Info.plist"),
+        }
+    }
+
+    fn test_worker_status(root: &Path) -> WorkerEnvironmentStatus {
+        WorkerEnvironmentStatus {
+            ok: true,
+            message: "ready".to_string(),
+            interpreter_path: root.join("python/bin/python3"),
+            venv_path: root.join("python/.venv"),
+            marker_path: root.join("python/bootstrap-marker.json"),
+            lock_sha256: "abc123".to_string(),
+            python_version: "3.11".to_string(),
+        }
+    }
+
+    fn make_test_app(root: &Path) -> Result<DesktopApp> {
+        let paths = AppPaths::from_root(root.join("state"))?;
+        let store = Arc::new(SqliteModelStore::open(&paths.state_db)?);
+        DesktopApp::new(
+            paths,
+            test_resources(root),
+            store,
+            Arc::new(FakeConversionBackend),
+            Arc::new(FakeInferenceBackend),
+            test_worker_status(root),
+        )
+    }
+
+    fn wait_for_job_state(app: &DesktopApp, job_id: &str, expected: JobState) -> Result<JobRecord> {
+        for _ in 0..100 {
+            if let Some(job) = app
+                .list_jobs()?
+                .into_iter()
+                .find(|job| job.id == job_id && job.state == expected)
+            {
+                return Ok(job);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Err(anyhow!("job {job_id} did not reach state {:?}", expected))
+    }
 
     #[test]
     fn deduplicates_imported_models_by_hash() -> Result<()> {
@@ -1907,6 +2183,121 @@ mod tests {
         let second = store.import_local(&sample_path, &managed_path, &hash)?;
         assert_eq!(first.id, second.id);
         assert_eq!(store.list_models()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn import_local_auto_inspects_and_marks_ready_to_convert() -> Result<()> {
+        let root = tempdir()?;
+        let app = make_test_app(root.path())?;
+        let sample_path = root.path().join("sample.gguf");
+        fs::write(&sample_path, b"GGUFsample")?;
+
+        let model = app.import_local(&sample_path)?;
+        let stored = app
+            .list_models()?
+            .into_iter()
+            .find(|entry| entry.id == model.id)
+            .expect("model should exist");
+
+        assert_eq!(stored.status, ModelStatus::ReadyToConvert);
+        assert_eq!(stored.family.as_deref(), Some("llama"));
+        assert_eq!(stored.parameter_hint.as_deref(), Some("8B"));
+        Ok(())
+    }
+
+    #[test]
+    fn theme_setting_persists() -> Result<()> {
+        let root = tempdir()?;
+        let app = make_test_app(root.path())?;
+
+        app.set_ui_setting("ui.theme_mode", "1")?;
+        assert_eq!(app.get_ui_setting("ui.theme_mode")?, Some("1".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn next_chat_step_guides_convert_then_prepare_flow() -> Result<()> {
+        let root = tempdir()?;
+        let app = make_test_app(root.path())?;
+        let sample_path = root.path().join("sample.gguf");
+        fs::write(&sample_path, b"GGUFsample")?;
+        let model = app.import_local(&sample_path)?;
+
+        assert!(
+            app.next_chat_step(&model.id)?
+                .expect("should require conversion")
+                .contains("Convert")
+        );
+
+        let convert_job = app.queue_conversion(&model.id, ConversionProfile::default())?;
+        let _ = wait_for_job_state(&app, &convert_job, JobState::Completed)?;
+        assert!(
+            app.next_chat_step(&model.id)?
+                .expect("should require preparation")
+                .contains("Prepare")
+        );
+
+        let prepare_job = app.queue_prepare_runtime(&model.id, RuntimeProfile::default())?;
+        let _ = wait_for_job_state(&app, &prepare_job, JobState::Completed)?;
+        assert!(app.next_chat_step(&model.id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn queue_conversion_records_progress_and_launchable_state() -> Result<()> {
+        let root = tempdir()?;
+        let app = make_test_app(root.path())?;
+        let sample_path = root.path().join("sample.gguf");
+        fs::write(&sample_path, b"GGUFsample")?;
+        let model = app.import_local(&sample_path)?;
+
+        let job_id = app.queue_conversion(&model.id, ConversionProfile::default())?;
+        let job = wait_for_job_state(&app, &job_id, JobState::Completed)?;
+        assert_eq!(job.progress, 1.0);
+        assert!(job.stage.contains("Verified") || job.stage.contains("Converted"));
+
+        let model = app
+            .list_models()?
+            .into_iter()
+            .find(|entry| entry.id == model.id)
+            .expect("model should exist");
+        assert_eq!(model.status, ModelStatus::Launchable);
+        assert!(app
+            .store
+            .resolve_artifact(&model.id, ArtifactKind::TritpackDir)?
+            .is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn generate_stream_saves_session_and_delete_model_cleans_up() -> Result<()> {
+        let root = tempdir()?;
+        let app = make_test_app(root.path())?;
+        let sample_path = root.path().join("sample.gguf");
+        fs::write(&sample_path, b"GGUFsample")?;
+        let model = app.import_local(&sample_path)?;
+
+        let convert_job = app.queue_conversion(&model.id, ConversionProfile::default())?;
+        let _ = wait_for_job_state(&app, &convert_job, JobState::Completed)?;
+        let prepare_job = app.queue_prepare_runtime(&model.id, RuntimeProfile::default())?;
+        let _ = wait_for_job_state(&app, &prepare_job, JobState::Completed)?;
+
+        let receiver = app.generate_stream(&model.id, "hello".to_string(), RuntimeProfile::default())?;
+        let _ = receiver.recv_timeout(Duration::from_secs(1));
+
+        let session_summaries = app.list_chat_session_summaries()?;
+        assert_eq!(session_summaries.len(), 1);
+        assert!(session_summaries[0].contains("hello"));
+
+        let artifacts = app.store.list_artifacts(&model.id)?;
+        assert!(!artifacts.is_empty());
+        app.delete_model(&model.id)?;
+        assert!(app.list_models()?.is_empty());
+        assert!(app.store.list_sessions()?.is_empty());
+        for artifact in artifacts {
+            assert!(!artifact.path.exists());
+        }
         Ok(())
     }
 }
