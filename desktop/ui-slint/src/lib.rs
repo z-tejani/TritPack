@@ -2,7 +2,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use anyhow::Result;
-use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
+use i_slint_backend_winit::WinitWindowAccessor;
+use slint::{ModelRc, PhysicalPosition, SharedString, Timer, TimerMode, VecModel};
 use tritpack_app_core::{DesktopApp, HuggingFaceFile};
 use tritpack_runtime_api::{ConversionProfile, InferenceEvent, RuntimeProfile};
 
@@ -34,6 +35,27 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     );
     if let Some(token) = app.load_huggingface_token()? {
         window.set_hf_token(token.into());
+    }
+
+    {
+        let weak = window.as_weak();
+        let _ = slint::spawn_local(async move {
+            if let Some(window) = weak.upgrade() {
+                if let Ok(winit_window) = window.window().winit_window().await {
+                    if let Some(monitor) = winit_window.current_monitor() {
+                        let monitor_size = monitor.size();
+                        let outer_size = winit_window.outer_size();
+                        let centered_x = monitor.position().x
+                            + ((monitor_size.width as i32 - outer_size.width as i32) / 2).max(0);
+                        let centered_y = monitor.position().y
+                            + ((monitor_size.height as i32 - outer_size.height as i32) / 2).max(0);
+                        window
+                            .window()
+                            .set_position(PhysicalPosition::new(centered_x, centered_y));
+                    }
+                }
+            }
+        });
     }
 
     refresh_models(&app, &window, &library_items, &job_items)?;
@@ -79,6 +101,38 @@ pub fn run(app: Arc<DesktopApp>) -> Result<()> {
     window.on_refresh_runtime(move || {
         if let Some(window) = weak.upgrade() {
             let _ = refresh_runtime(&app_for_runtime, &window, &runtime_for_runtime);
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_close_window(move || {
+        if let Some(window) = weak.upgrade() {
+            let _ = window.window().hide();
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_minimize_window(move || {
+        if let Some(window) = weak.upgrade() {
+            window.window().set_minimized(true);
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_toggle_maximize_window(move || {
+        if let Some(window) = weak.upgrade() {
+            let slint_window = window.window();
+            let maximized = slint_window.is_maximized();
+            slint_window.set_maximized(!maximized);
+        }
+    });
+
+    let weak = window.as_weak();
+    window.on_begin_window_drag(move || {
+        if let Some(window) = weak.upgrade() {
+            let _ = window
+                .window()
+                .with_winit_window(|winit_window| winit_window.drag_window());
         }
     });
 

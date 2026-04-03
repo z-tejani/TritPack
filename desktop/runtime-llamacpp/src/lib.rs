@@ -67,43 +67,23 @@ impl LlamaCppBackend {
         ))
     }
 
-    fn binary_diagnostics(&self, request_binary: Option<PathBuf>) -> String {
-        let candidates = self.candidate_binaries(request_binary);
-        if candidates.is_empty() {
-            return "No candidate binary paths were generated".to_string();
+    fn version_summary(&self, path: &std::path::Path) -> Option<String> {
+        let output = Command::new(path).arg("--version").output().ok()?;
+        if !output.status.success() {
+            return None;
         }
 
-        candidates
-            .into_iter()
-            .map(|candidate| {
-                if !candidate.exists() {
-                    return format!("{} (missing)", candidate.display());
-                }
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
 
-                match Command::new(&candidate).arg("--version").output() {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                        let version = if !stdout.is_empty() { stdout } else { stderr };
-                        if version.is_empty() {
-                            format!("{} (available)", candidate.display())
-                        } else {
-                            format!("{} ({version})", candidate.display())
-                        }
-                    }
-                    Ok(output) => format!(
-                        "{} (found but --version failed with status {})",
-                        candidate.display(),
-                        output.status
-                    ),
-                    Err(error) => format!(
-                        "{} (found but could not execute: {error})",
-                        candidate.display()
-                    ),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
+        combined
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("version:"))
+            .map(|line| line.replacen("version:", "v", 1).trim().to_string())
     }
 
     fn ensure_cached_gguf(&self, request: &LoadModelRequest) -> Result<PathBuf> {
@@ -146,15 +126,14 @@ impl InferenceBackend for LlamaCppBackend {
         match self.resolve_binary(None) {
             Ok(path) => Ok(BackendHealth {
                 ok: true,
-                message: format!(
-                    "Using {} | {}",
-                    path.display(),
-                    self.binary_diagnostics(Some(path.clone()))
+                message: self.version_summary(&path).map_or_else(
+                    || "Bundled llama.cpp runtime ready".to_string(),
+                    |version| format!("Bundled llama.cpp runtime ready ({version})"),
                 ),
             }),
             Err(error) => Ok(BackendHealth {
                 ok: false,
-                message: format!("{} Tried: {}", error, self.binary_diagnostics(None)),
+                message: error.to_string(),
             }),
         }
     }

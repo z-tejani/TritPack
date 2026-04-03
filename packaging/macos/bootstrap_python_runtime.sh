@@ -22,6 +22,8 @@ manifest = tomllib.loads(manifest_path.read_text())
 
 archive_path = tmp_dir / manifest["archive_name"]
 extract_dir = tmp_dir / "extract"
+if tmp_dir.exists():
+    shutil.rmtree(tmp_dir)
 tmp_dir.mkdir(parents=True, exist_ok=True)
 extract_dir.mkdir(parents=True, exist_ok=True)
 
@@ -35,7 +37,9 @@ if digest != manifest["sha256"]:
 with tarfile.open(archive_path, "r:gz") as tar:
     tar.extractall(extract_dir)
 
-install_root = next((path for path in extract_dir.iterdir() if path.is_dir()), None)
+install_root = extract_dir / "python"
+if not install_root.exists():
+    install_root = next((path for path in extract_dir.iterdir() if path.is_dir()), None)
 if install_root is None:
     raise SystemExit("could not locate extracted CPython runtime")
 
@@ -45,6 +49,8 @@ shutil.copytree(install_root, dest_dir)
 python_bin = dest_dir / "bin/python3"
 if not python_bin.exists():
     raise SystemExit(f"expected interpreter at {python_bin}")
+if not any((dest_dir / "lib").glob("libpython*.dylib")):
+    raise SystemExit(f"expected a libpython dylib under {dest_dir / 'lib'}")
 python_bin.chmod(0o755)
 print(f"vendored python runtime: {python_bin}")
 PY

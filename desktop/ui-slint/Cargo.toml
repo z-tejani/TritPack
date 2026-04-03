@@ -7,6 +7,7 @@ build = "build.rs"
 
 [dependencies]
 anyhow.workspace = true
+i-slint-backend-winit = "1.15"
 slint.workspace = true
 tritpack-app-core = { path = "../app-core" }
 tritpack-runtime-api = { path = "../runtime-api" }

@@ -19,6 +19,7 @@ pub struct ResourcePaths {
     pub python_requirements: PathBuf,
     pub python_runtime_manifest: PathBuf,
     pub python_worker_script: PathBuf,
+    pub python_wheelhouse: PathBuf,
     pub info_plist_template: PathBuf,
 }
 
@@ -41,6 +42,7 @@ impl ResourcePaths {
             python_requirements: root.join("python/requirements.lock"),
             python_runtime_manifest: root.join("python/runtime-manifest.toml"),
             python_worker_script: root.join("python/worker/desktop_worker.py"),
+            python_wheelhouse: root.join("python/wheelhouse"),
             info_plist_template: repo_root.join("packaging/macos/Info.plist"),
             root,
         })
@@ -120,6 +122,7 @@ pub fn ensure_managed_python_env(
     let venv_python = paths.managed_venv.join("bin/python3");
     let marker_path = paths.python_marker.clone();
     let worker_script = discover_worker_script(resources, repo_root);
+    let offline_wheelhouse = has_offline_wheelhouse(resources);
 
     let is_current = match fs::read_to_string(&marker_path) {
         Ok(raw) => {
@@ -142,22 +145,7 @@ pub fn ensure_managed_python_env(
             &["-m", "venv", paths.managed_venv.to_string_lossy().as_ref()],
             "create managed virtualenv",
         )?;
-        run_command(
-            &venv_python,
-            &["-m", "pip", "install", "--upgrade", "pip", "wheel"],
-            "upgrade pip in managed virtualenv",
-        )?;
-        run_command(
-            &venv_python,
-            &[
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                resources.python_requirements.to_string_lossy().as_ref(),
-            ],
-            "install TritPack worker requirements",
-        )?;
+        install_worker_requirements(&venv_python, resources, offline_wheelhouse)?;
         let marker = BootstrapMarker {
             python_version: runtime_manifest.version.clone(),
             lock_sha256: lock_sha256.clone(),
@@ -175,10 +163,15 @@ pub fn ensure_managed_python_env(
     Ok(WorkerEnvironmentStatus {
         ok: venv_python.exists() && worker_script.exists(),
         message: format!(
-            "Managed worker env ready | python={} | worker={} | lock={}",
+            "Managed worker env ready | python={} | worker={} | lock={} | mode={}",
             venv_python.display(),
             worker_script.display(),
-            &lock_sha256[..12]
+            &lock_sha256[..12],
+            if offline_wheelhouse {
+                "offline-wheelhouse"
+            } else {
+                "pypi-fallback"
+            }
         ),
         interpreter_path: venv_python,
         venv_path: paths.managed_venv.clone(),
@@ -269,6 +262,41 @@ fn sync_managed_cpython(paths: &AppPaths, resources: &ResourcePaths) -> Result<(
     Ok(())
 }
 
+fn install_worker_requirements(
+    venv_python: &Path,
+    resources: &ResourcePaths,
+    offline_wheelhouse: bool,
+) -> Result<()> {
+    if offline_wheelhouse {
+        run_command(
+            venv_python,
+            &[
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                resources.python_wheelhouse.to_string_lossy().as_ref(),
+                "-r",
+                resources.python_requirements.to_string_lossy().as_ref(),
+            ],
+            "install TritPack worker requirements from the bundled wheelhouse",
+        )
+    } else {
+        run_command(
+            venv_python,
+            &[
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                resources.python_requirements.to_string_lossy().as_ref(),
+            ],
+            "install TritPack worker requirements from PyPI",
+        )
+    }
+}
+
 fn copy_dir_all(source: &Path, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)?;
     for entry in fs::read_dir(source)? {
@@ -285,6 +313,22 @@ fn copy_dir_all(source: &Path, dest: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn has_offline_wheelhouse(resources: &ResourcePaths) -> bool {
+    resources.python_wheelhouse.exists()
+        && fs::read_dir(&resources.python_wheelhouse)
+            .map(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| matches!(ext, "whl" | "zip"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
 }
 
 fn validate_python_modules(program: &Path) -> Result<()> {
@@ -364,6 +408,22 @@ sha256 = "abc123"
         let manifest = load_python_runtime_manifest(&resources)?;
         assert_eq!(manifest.version, "3.11.15");
         assert_eq!(manifest.sha256, "abc123");
+        Ok(())
+    }
+
+    #[test]
+    fn detects_offline_wheelhouse() -> Result<()> {
+        let root = tempdir()?;
+        fs::create_dir_all(root.path().join("resources/python/wheelhouse"))?;
+        let resources = ResourcePaths::discover(root.path())?;
+        assert!(!has_offline_wheelhouse(&resources));
+
+        fs::write(
+            root.path()
+                .join("resources/python/wheelhouse/numpy-1.0.0-py3-none-any.whl"),
+            b"placeholder",
+        )?;
+        assert!(has_offline_wheelhouse(&resources));
         Ok(())
     }
 }

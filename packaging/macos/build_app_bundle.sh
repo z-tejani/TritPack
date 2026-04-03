@@ -10,6 +10,7 @@ MACOS_DIR="$APP_DIR/Contents/MacOS"
 
 "$ROOT/packaging/macos/vendor_llamacpp.sh"
 "$ROOT/packaging/macos/bootstrap_python_runtime.sh"
+"$ROOT/packaging/macos/build_python_wheelhouse.sh"
 
 cargo build --release -p tritpack-desktop --manifest-path "$ROOT/Cargo.toml"
 

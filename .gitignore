@@ -34,3 +34,4 @@ rust/target/
 resources/llama.cpp/*
 !resources/llama.cpp/manifest.toml
 resources/python/cpython/
+resources/python/wheelhouse/

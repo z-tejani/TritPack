@@ -837,23 +837,53 @@ impl DesktopApp {
             .count();
         Ok(vec![
             format!("Backend: {}", self.runtime_backend.name()),
-            format!("Healthy: {}", health.ok),
-            format!("Status: {}", health.message),
-            format!("Streaming: {}", caps.supports_streaming),
-            format!("Interrupt: {}", caps.supports_interrupt),
-            format!("Embeddings: {}", caps.supports_embeddings),
             format!(
-                "Reconstructed cache dir: {}",
-                self.paths.cache_reconstructed.display()
+                "Runtime: {}",
+                if health.ok { "Ready" } else { "Unavailable" }
+            ),
+            format!("Runtime detail: {}", summarize_status_line(&health.message)),
+            format!(
+                "Streaming: {}",
+                if caps.supports_streaming {
+                    "Supported"
+                } else {
+                    "Unavailable"
+                }
+            ),
+            format!(
+                "Interrupt: {}",
+                if caps.supports_interrupt {
+                    "Supported"
+                } else {
+                    "Unavailable"
+                }
+            ),
+            format!(
+                "Embeddings: {}",
+                if caps.supports_embeddings {
+                    "Supported"
+                } else {
+                    "Unavailable"
+                }
+            ),
+            format!(
+                "Reconstructed cache: {}",
+                summarize_path(&self.paths.cache_reconstructed)
             ),
             format!("Prepared models cached: {}", cached),
-            format!("Worker ready: {}", worker.ok),
-            format!("Worker status: {}", worker.message),
-            format!("Worker interpreter: {}", worker.interpreter_path.display()),
-            format!("Worker venv: {}", worker.venv_path.display()),
-            format!("Worker marker: {}", worker.marker_path.display()),
+            format!(
+                "Worker: {}",
+                if worker.ok { "Ready" } else { "Setup needed" }
+            ),
+            format!("Worker detail: {}", summarize_status_line(&worker.message)),
+            format!(
+                "Worker interpreter: {}",
+                summarize_path(&worker.interpreter_path)
+            ),
+            format!("Worker venv: {}", summarize_path(&worker.venv_path)),
+            format!("Worker marker: {}", summarize_path(&worker.marker_path)),
             format!("Worker python version: {}", worker.python_version),
-            format!("Worker lock sha: {}", worker.lock_sha256),
+            format!("Worker lock sha: {}", short_hash(&worker.lock_sha256)),
         ])
     }
 
@@ -1394,11 +1424,14 @@ impl DesktopApp {
 
     pub fn runtime_health(&self) -> Result<String> {
         let health = self.runtime_backend.health_check()?;
-        Ok(format!(
-            "{} | {}",
-            if health.ok { "Ready" } else { "Unavailable" },
-            health.message
-        ))
+        let worker = self.worker_status.lock().clone();
+        Ok(if !worker.ok {
+            "Worker setup needed".to_string()
+        } else if health.ok {
+            "Runtime ready".to_string()
+        } else {
+            "llama.cpp unavailable".to_string()
+        })
     }
 }
 
@@ -1413,6 +1446,48 @@ fn sanitize_filename(name: &str) -> String {
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(12).collect()
+}
+
+fn summarize_status_line(message: &str) -> String {
+    let line = message
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or(message.trim());
+
+    if line.chars().count() <= 96 {
+        return line.to_string();
+    }
+
+    let truncated: String = line.chars().take(93).collect();
+    format!("{truncated}...")
+}
+
+fn summarize_path(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(stripped) = path.strip_prefix(&home) {
+            return format!("~/{}", stripped.display());
+        }
+    }
+
+    let text = path.display().to_string();
+    if text.chars().count() <= 72 {
+        return text;
+    }
+
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(69)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("...{tail}")
 }
 
 fn hash_string(input: &str) -> String {

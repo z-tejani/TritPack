@@ -5453,6 +5453,7 @@ name = "tritpack-ui-slint"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "i-slint-backend-winit",
  "slint",
  "slint-build",
  "tritpack-app-core",
